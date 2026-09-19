@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 0.8.0<br>
+**Verze:** 0.9.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -3518,7 +3518,435 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 
 ---
 
-## 26. Historie verzí
+## 27. Step 11 – Současný přístup, konflikty změn, idempotence a konzistence dat
+
+Tato kapitola definuje logickou architekturu systému Nástěnka pro zvládání **souběžného přístupu více uživatelů (concurrency), detekci a řešení konfliktů při změnách, idempotenci API operací a garanci transakční konzistence**.
+
+Základní postulát této kapitoly zní:
+> [!IMPORTANT]
+> **V systému Nástěnka nikdy nesmí dojít k tichému přepsání platné změny jiného uživatele bez vědomého rozhodnutí architektury (zákaz implicitního Last-Write-Wins).**
+
+---
+
+### 27.1 Pojem souběžného přístupu (Concurrent Access) a typické scénáře
+
+Souběžný přístup nastává v okamžiku, kdy dva či více nezávislých uživatelů (či procesů) pracují ve stejném čase nad totožnými datovými entitami. V kolaborativním prostředí Nástěnky jde o standardní provozní situaci.
+
+#### Typické souběžné scénáře:
+
+##### Scénář A – Dva uživatelé současně upravují stejný úkol (Task Update Collision)
+```text
+1. Milan načte Task (verze 5).
+2. Jan načte tentýž Task (verze 5).
+3. Milan provede úpravu popisu a úspěšně uloží ──► Task je nyní ve verzi 6.
+4. Jan se zpožděním odesílá svou úpravu termínu, vycházející z původní verze 5.
+```
+*Riziko bez ochrany:* Pokud by server Janovu změnu slepě přijal, přepsal by Milanův nově upravený popis Janovým starým stavem popisu (tzv. *Lost Update*).
+*Architektonické řešení:* Janův požadavek je detekován jako práce se zastaralými daty a je odmítnut chybou `409 Conflict`.
+
+##### Scénář B – Dva uživatelé současně mění Hlavního Řešitele (Assignee Collision)
+```text
+1. Milan přiřazuje úkol Janovi (POST /tasks/{id}/assignee -> Jan).
+2. Petr v témže okamžiku přiřazuje tentýž úkol Evě (POST /tasks/{id}/assignee -> Eva).
+```
+*Architektonické řešení:* Pouze jedna transakce uspěje a posune stav. Druhý požadavek narazí na změněnou verzi a vrátí `409 Conflict`. Úkol v žádném okamžiku nesmí mít dva řešitele ani nekonzistentní stav.
+
+##### Scénář C – Současný převod vlastnictví Nástěnky (Ownership Collision)
+```text
+1. Aktuální OWNER zahájí převod vlastnictví Nástěnky na Jana.
+2. Globální ADMIN v téže chvíli provádí krizový administrativní zásah a převádí Nástěnku na Petra.
+```
+*Architektonické řešení:* Jde o kritickou operaci. Transakce musí být serializována; nesmí vzniknout stav dvou souběžných Ownerů ani Nástěnka bez Ownera. Jeden požadavek projde, druhý je zamítnut.
+
+##### Scénář D – Současné smazání a úprava (Delete vs. Update Collision)
+```text
+1. Uživatel A provede řízené smazání úkolu (DELETE /tasks/{id} s potvrzením SMAZAT).
+2. Uživatel B v témže okamžiku odesílá úpravu atributů (PATCH /tasks/{id}).
+```
+*Architektonické řešení:* Jakmile je úkol transakčně smazán, souběžný požadavek na úpravu je odmítnut (úkol již neexistuje). Nedochází k žádnému vytvoření osiřelých dat ani oživení smazaného objektu.
+
+---
+
+### 27.2 Výchozí přístup: Optimistic Concurrency Control (OCC)
+
+Pro běžné úpravy doménových entit (`Task`, `Area`, `Board`, `Membership`) systém Nástěnka volí jako výchozí strategii **Optimistic Concurrency Control (OCC)**:
+
+1. **Předpoklad nízkého konfliktu:** Systém předpokládá, že ke kolizím dochází v menšině případů. Nezamyká proto databázové záznamy během doby, kdy si uživatel data v prohlížeči prohlíží či edituje.
+2. **Koncepce verzování:** Každá verze entity nese jednoznačný concurrency indikátor:
+   * celočíselná verze (`version` – monotonně rostoucí sekvence),
+   * časové razítko poslední změny (`updated_at`),
+   * nebo kryptografický hash stavu (ETag).
+3. **Závazný princip OCC:**
+   > [!IMPORTANT]
+   > Klient smí aktualizovat objekt pouze tehdy, pokud serveru prokáže, že jeho změna vychází ze stejné verze objektu, jaká se aktuálně nachází v databázi.
+
+---
+
+### 27.3 Práce se zastaralými daty (Stale Data)
+
+* **Stale Data (Zastaralá data):** Reprezentace doménového objektu držená klientem, jejíž verze je nižší než aktuální verze evidovaná autoritativním backendem (`client_version < server_version`).
+* **Zákaz tiché akceptace:** Požadavek na úpravu postavený na zastaralých datech nesmí být serverem nikdy tvořen jako nová platná verze.
+* Pokus o uložení zastaralých dat představuje stavový konflikt, který musí být explicitně signalizován volajícímu.
+
+---
+
+### 27.4 Konfliktní odpověď: HTTP 409 Conflict
+
+V návaznosti na chybový model ze Step 7 a Step 9 slouží pro signalizaci souběžných konfliktů stavový kód:
+
+```text
+HTTP 409 Conflict
+```
+
+#### Přísné rozlišení chybových stavů:
+* **`403 Forbidden` (Chyba oprávnění):** Volající (Actor) nemá právo operaci provést (např. není členem Nástěnky, není Ownerem). Zde se vůbec nezkoumá verze dat; operace je zamítnuta v autorizační vrstvě.
+* **`409 Conflict` (Stavový konflikt):** Volající má platné oprávnění operaci provést, ale operaci nelze aplikovat z důvodu konfliktu se současným stavem cílového objektu (zastaralá verze, kolize souběžné změny, objekt mezitím smazán).
+* **`422 Unprocessable Entity` (Validační chyba):** Data zaslaná v požadavku jsou syntakticky či sémanticky neplatná (např. prázdný název úkolu, neplatné datum).
+
+---
+
+### 27.5 Protokol a pravidla Optimistic Locking
+
+Proces optimistického zamykání probíhá v následujících pěti krocích:
+
+```text
+1. READ:     Klient načte objekt ──► obdrží data a aktuální token (version = 5)
+2. EDIT:     Uživatel upravuje data v UI
+3. WRITE:    Klient odesílá změnu s očekávanou verzí (expected_version = 5)
+4. VERIFY:   Backend v transakci atomicky ověří:
+             UPDATE tasks SET title = :newTitle, version = version + 1
+             WHERE id = :taskId AND version = :expected_version
+5. OUTCOME:
+   ├── Zasažen 1 řádek  ──► SUCCESS: verze se posunula na 6, COMMIT, vrací 200 OK
+   └── Zasaženo 0 řádků ──► CONFLICT: mezitím změnil někdo jiný, ROLLBACK, vrací 409 Conflict
+```
+
+* Při úspěchu je atomicky inkrementována verze a transakce je potvrzena.
+* Při neshodě verzí databáze neprovede žádnou úpravu dat, transakce je vrácena a klient obdrží `409 Conflict`. Aktuální stav v databázi zůstává netknut.
+
+---
+
+### 27.6 Vztah: Atomicita vs. Concurrency Control
+
+Architektura striktně rozlišuje tyto dva vzájemně se doplňující koncepty:
+
+* **Atomicita (Databázová transakce):**
+  * Zajišťuje integritu operace z technického hlediska (*All-or-Nothing*).
+  * Garantuje, že skupina změn (např. smazání oblasti + smazání jejích úkolů + zápis do AuditLogu) proběhne celá, nebo vůbec.
+* **Concurrency Control (Řízení souběhu):**
+  * Zajišťuje logickou a byznysovou integritu v čase.
+  * Garantuje, že uživatel nepřepíše cizí práci a že operace vychází z pravdivého stavu reality.
+
+Transakce nechrání před ztrátou změn způsobenou pomalým uživatelem; optimistické zamykání zase nenahrazuje atomickou transakci. Obě vrstvy musí fungovat společně.
+
+---
+
+### 27.7 Souběhy (Race Conditions) a jejich prevence
+
+**Race condition (souběh)** je stav, kdy konečný výsledek systému závisí na náhodném časovém pořadí, v němž server zpracuje souběžné požadavky.
+
+Systém Nástěnka definuje povinnou ochranu proti race conditions u všech kritických operací:
+1. **Převod vlastnictví (`TRANSFER_OWNERSHIP`):** Nesmí vzniknout 2 vlastníci ani stav bez vlastníka.
+2. **Správa provozního manažera (`CHANGE_MANAGER`):** Nesmí vzniknout 2 manažeři (maximálně 1 Manager na Nástěnku).
+3. **Přidání člena (`ADD_MEMBER`):** Dva administrátoři přidávající téhož uživatele nesmí vytvořit duplicitní členství (`UNIQUE(user_id, board_id)`).
+4. **Změna rolí a odebrání člena:** Souběžné odebrání a povýšení člena musí skončit konzistentním stavem.
+5. **Řízený hard-delete úkolu a oblasti (`DELETE_TASK`, `DELETE_AREA`):** Mazání nesmí kolidovat s editací ani vytvářet osiřelé záznamy.
+
+---
+
+### 27.8 Přehled concurrency ochrany u kritických doménových operací
+
+Následující matice definuje povinné mechanismy ochrany pro doménové operace systému:
+
+| Doménová operace | Concurrency ochrana (OCC / Lock) | Atomická transakce | Primární ochranný mechanismus |
+|---|---|---|---|
+| `CREATE_BOARD` | Ano (Idempotence) | Ano | Transakce (Board + Owner Membership) |
+| `TRANSFER_OWNERSHIP` | Ano (Serializace / OCC) | Ano | Řádkový zámek / Serializovatelná transakce |
+| `CHANGE_MANAGER` | Ano (OCC / Constraint) | Ano | Transakce + kontrola max. 1 Managera |
+| `ADD_MEMBER` | Ano (Idempotence) | Ano | `UNIQUE(user_id, board_id)` constraint |
+| `REMOVE_MEMBER` | Ano (OCC) | Ano | Transakce + kontrola ochrany Ownera |
+| `CHANGE_ROLE` | Ano (OCC) | Ano | Transakční verifikace aktuální role |
+| `ASSIGN_TASK` | Ano (OCC) | Ano | Verze Tasku + kontrola členství řešitele |
+| `ADD_TASK_PARTICIPANT` | Ano (Constraint / OCC) | Ano | `UNIQUE(task_id, user_id)` constraint |
+| `DELETE_TASK` | Ano (OCC + Confirmation) | Ano | Atomický hard-delete + AuditLog + potvrzení SMAZAT |
+| `DELETE_AREA` | Ano (OCC + Confirmation) | Ano | Kaskádový atomický hard-delete + AuditLog |
+| `DELETE_BOARD` | Ano (OCC) | Ano | Soft-delete transakce + AuditLog |
+
+---
+
+### 27.9 Pravidla pro souběžnou změnu Tasku
+
+Při souběžných úpravách atributů úkolu (`title`, `description`, `priority`, `due_date`, `status`, `area_id`) platí:
+
+1. **Zákaz automatického tichého slučování (No Auto-Merge):**
+   * Systém v 1. verzi neprovádí žádný implicitní 3-cestný merge textových polí.
+   * Pokus o úpravu úkolu, jehož verze neodpovídá verzi na serveru, je vždy odmítnut jako celek chybou `409 Conflict`.
+2. **Zachování integrity vazeb:**
+   * Pokud jeden uživatel přesouvá úkol do jiné oblasti (`area_id`) a druhý uživatel oblast mezitím smaže, přesun úkolu selže na neexistenci cílové oblasti.
+3. **Deterministický postup:**
+   * Konflikt (`409`) ──► Klient načte aktuální stav ──► Uživatel vidí aktuální hodnoty a vědomě rozhodne o dalším postupu.
+
+---
+
+### 27.10 Souběh při změně řešitele (Assignee Concurrency)
+
+Operace změny Hlavního Řešitele (`PATCH /tasks/{id}/assignee`) podléhá striktnímu verzování:
+
+```text
+Výchozí stav: Task #42 (verze 10, assignee: null)
+
+1. Požadavek A (Milan): Nastav assignee = Jan, očekávaná verze = 10
+2. Požadavek B (Petr):  Nastav assignee = Eva, očekávaná verze = 10
+
+Server zpracuje Požadavek A:
+- Verze 10 odpovídá.
+- Assignee nastaven na Jan, verze posunuta na 11.
+- COMMIT. Vráceno 200 OK.
+
+Server zpracuje Požadavek B:
+- Očekávaná verze 10 neodpovídá (aktuální je 11).
+- Změna neprovedena, ROLLBACK.
+- Vráceno 409 Conflict s informací, že úkol byl mezitím přiřazen Janovi.
+```
+
+Tímto je vyloučeno, aby došlo k přepsání řešitele bez vědomí uživatele.
+
+---
+
+### 27.11 Souběžné změny členství a rolí (Membership Concurrency)
+
+Při operacích nad členstvím Nástěnky vystupují jako poslední nepřekročitelná linie integrity databázové constrainty:
+
+1. **Souběžné přidání stejného člena:** Pokud dva správci současně přidávají téhož uživatele, transakce, která doběhne jako druhá, narazí na `UNIQUE(user_id, board_id)`. Požadavek je zachycen a ošetřen jako idempotentní úspěch nebo `409 Conflict`.
+2. **Souběžné jmenování Managera:** Pokud dva uživatelé současně jmenují různé členy do role `MANAGER`, aplikační transakční kontrola a případný parciální unikátní index zajistí, že Nástěnka nebude mít v žádném okamžiku více než jednoho platného Managera. Druhý požadavek selže na porušení Invariantu 2.
+3. **Odebrání vs. změna role:** Pokud je uživatel jedním správcem z Nástěnky odebírán a druhým správcem povyšován na Managera, operace odebrání musí zrušit členství dříve, než by mohla vzniknout neplatná osiřelá role. Druhý požadavek obdrží chybu o neexistujícím členství.
+
+---
+
+### 27.12 Současný převod vlastnictví (Kritický scénář)
+
+Převod vlastnictví Nástěnky (`TRANSFER_OWNERSHIP`) je nejcitlivější doménovou operací. Pokud nastane souběh (např. stávající Owner převádí Nástěnku na člena A, zatímco globální Admin direktivně převádí Nástěnku na člena B):
+
+1. **Serializace přístupu:** Operace uzamyká řádek Nástěnky (`Board`) a příslušné záznamy `Membership` pro update v rámci nejpřísnější transakční izolace.
+2. **Pravidlo jediného vítěze:** První transakce provede atomickou záměnu rolí (`stávající OWNER → MEMBER`, `nový člen → OWNER`) a commitne se.
+3. **Odmítnutí druhého požadavku:** Druhá transakce po uvolnění zámku zjistí, že původní předpoklad (kdo je stávající Owner) již neplatí. Transakce je odmítnuta chybou `409 Conflict`.
+4. **Garantovaný výsledek:** Na Nástěnce existuje v každém okamžiku **přesně jeden platný OWNER**. Vznik stavu s 0 nebo 2 Owneri je fyzicky nemožný.
+
+---
+
+### 27.13 Souběh při mazání (Concurrent DELETE)
+
+#### 1. `DELETE_TASK` vs. `PATCH_TASK`
+* Pokud uživatel A smaže úkol v čase $T_1$ a uživatel B odešle úpravu téhož úkolu v čase $T_2$ ($T_2 > T_1$):
+  * Požadavek B zjistí, že úkol s daným `id` v databázi neexistuje.
+  * Server vrátí `404 Not Found` (případně `409 Conflict`).
+  * Nedochází k žádnému obnovení smazaného úkolu ani vzniku sirotčích záznamů.
+
+#### 2. `DELETE_AREA` vs. Úprava či vytvoření Tasku v dané oblasti
+* Smazání oblasti (`DELETE_AREA`) provádí kaskádový atomický hard-delete oblasti i všech v ní obsažených úkolů.
+* Pokud souběžný požadavek zkouší přidat úkol do mazané oblasti nebo upravit stávající úkol v této oblasti:
+  * Transakce smazání oblasti drží zámek nad oblastí.
+  * Souběžný požadavek selže buď na neexistenci cizího klíče `area_id` (cizí klíč selže), nebo na optimistickém zámku.
+  * V systému nikdy nevznikne úkol odkazující na neexistující oblast.
+
+---
+
+### 27.14 Idempotence API operací
+
+Architektura striktně definuje pojem idempotence:
+
+> [!NOTE]
+> **Idempotentní operace:** Operace, jejíž opakované provedení se stejnými parametry zanechá systém ve stejném stavu jako její jednorázové provedení a nezpůsobí nekontrolované opakování vedlejších účinků.
+
+#### Rozlišení úrovní idempotence:
+1. **HTTP Idempotence:**
+   * Garantována protokolem HTTP pro metody `GET`, `PUT`, `DELETE`.
+   * Příklad: `DELETE /tasks/42` – první volání úkol smaže (204), opakované volání konstatuje, že úkol neexistuje (404), ale stav systému (úkol neexistuje) zůstává identický.
+2. **Byznysová / Doménová Idempotence:**
+   * Týká se netriviálních operací s metodou `POST` (které v HTTP standardu idempotentní nejsou).
+   * Příklad: Opakované odeslání požadavku na vytvoření Nástěnky, vytvoření úkolu či přiřazení řešitele v důsledku výpadku sítě nesmí vytvořit dva duplicitní úkoly.
+
+---
+
+### 27.15 Mechanismus Idempotency Key
+
+Pro netriviální vytvářecí a stav měnící operace (např. `POST /boards`, `POST /tasks`) architektura zavádí koncept **Idempotency Key**:
+
+* Klient při odeslání požadavku vygeneruje unikátní klientský identifikátor (např. UUID v hlavičce `Idempotency-Key`).
+* Backend před provedením operace ověří, zda již požadavek s tímto klíčem pro daného `actor_user_id` nezpracoval:
+  * **Nový klíč:** Server transakčně provede operaci, uloží výsledek a asociuje jej s tímto klíčem.
+  * **Již zpracovaný klíč:** Server operaci **znovu neprovádí**, ale vrátí dříve uloženou odpověď (stejný payload i status kód).
+  * **Klíč právě zpracovávaný:** Server odmítne souběžný identický pokus (např. `409 Conflict` s informací, že požadavek se zpracovává).
+
+---
+
+### 27.16 Timeout, výpadek sítě a strategie opakování (Retry)
+
+Typický rizikový scénář v mobilním či nestabilním prostředí:
+
+```text
+1. Klient odešle: POST /tasks (vytvoř úkol "Revize kotle", Idempotency-Key: X)
+2. Server operaci úspěšně provede, úkol zapíše do DB a commitne.
+3. Síťové spojení selže dříve, než server stihne klientovi doručit odpověď 201 Created.
+4. Klientovi vyprší timeout. Klient neví, zda úkol vznikl, a provede RETRY se stejným klíčem X.
+5. Server rozpozná Idempotency-Key X ──► NEVYTVÁŘÍ druhý úkol, vrací původní 201 Created.
+```
+
+Díky kombinaci Idempotency Key a transakční integrity systém garantuje, že v databázi nevzniknou duplicitní úkoly ani duplicitní členství.
+
+---
+
+### 27.17 Rozlišení: Idempotence vs. Concurrency Control
+
+Tento rozdíl je zásadní pro správné pochopení architektury:
+
+* **Idempotence** chrání systém před **opakovaným odesláním TÉHOŽ požadavku** (např. v důsledku retry po timeoutu sítě).
+* **Concurrency Control** chrání systém před **souběžným odesláním RŮZNÝCH požadavků** nad stejnými daty (např. dva různí lidé měnící stejný úkol).
+
+Mechanismus pro idempotenci (např. `Idempotency-Key`) nenahrazuje verzování dat (`version` v OCC) a naopak.
+
+---
+
+### 27.18 Bezpečnostní pravidla pro Retry mechanismus
+
+Pokud klient nebo middleware provádí opakování (retry) neúspěšného či přerušeného požadavku:
+
+1. **Žádné obcházení autorizace:** Každý retry požadavek musí projít plnou a novou autorizační kontrolou vůči aktuálnímu stavu účtu a členství.
+2. **Žádné obcházení OCC:** Pokud byl požadavek odmítnut na `409 Conflict`, prostý slepý retry se stejnou verzí je zakázán (vedl by ke stejnému odmítnutí). Uživatel musí nejdříve načíst nový stav.
+3. **Žádné obcházení bezpečnostních potvrzení:** U destruktivních operací (`DELETE_TASK`, `DELETE_AREA`) nesmí být potvrzovací řetězec `SMAZAT` znovupoužit mimo kontext jediné autorizované operace.
+4. **Zákaz multiplikace doménového účinku:** Žádný retry nesmí vygenerovat vícenásobný zápis do `AuditLogu` ani vícenásobné doménové události.
+
+---
+
+### 27.19 Úrovně izolace transakcí (Transaction Isolation)
+
+Architektura specifikuje koncepční požadavky na úroveň transakční izolace nezávisle na konkrétním databázovém stroji:
+
+* **Read Committed (Základní provoz):**
+  * Výchozí úroveň pro běžné čtení a jednoduché jednorázové zápisy.
+  * Zabraňuje čtení nepotvrzených dat (*Dirty Reads*).
+* **Repeatable Read (Konzistentní pohled a OCC):**
+  * Vhodné pro transakce provádějící kontrolu verzí a aktualizaci doménových objektů.
+  * Zajišťuje, že data načtená během transakce se po dobu jejího trvání nezmění jinou potvrzenou transakcí.
+* **Serializable (Kritické organizační operace):**
+  * Vyžadováno pro operace, které kontrolují globální invarianty a následně mění stav:
+    * `TRANSFER_OWNERSHIP` (kontrola a garantování právě 1 Ownera),
+    * `CHANGE_MANAGER` (kontrola a garantování max. 1 Managera),
+    * `DELETE_AREA` (kaskádový rozpad bez vzniku sirotků).
+  * Zaručuje absolutní serializaci, jako by operace proběhly přísně sekvenčně za sebou.
+
+---
+
+### 27.20 Odmítnutí strategie Last-Write-Wins
+
+Architektura Nástěnky výslovně stanovuje:
+
+> [!CAUTION]
+> **Implicitní strategie „Last-Write-Wins“ (poslední zápis vyhrává) je pro editaci sdílených dat v systému Nástěnka ZAKÁZÁNA.**
+
+Pokud by byla použita strategie Last-Write-Wins, docházelo by k nebezpečným a nezjistitelným ztrátám dat (např. přepsání nově schváleného popisu úkolu starým konceptem). Každá editace sdíleného objektu musí být podmíněna ověřením verze (OCC). Výchozím stavem při zjištění neshody verzí je **vždy `409 Conflict`**.
+
+---
+
+### 27.21 Uživatelský zážitek a řešení konfliktu (UX Conflict Resolution)
+
+Chování uživatelského rozhraní při vzniku konfliktu je navrženo transparentně a bezpečně:
+
+1. **Okamžitá zpětná vazba:** Při návratovém kódu `409 Conflict` aplikace uživatele srozumitelně informuje: *„Tento úkol byl před okamžikem upraven jiným členem týmu.“*
+2. **Zobrazení rozdílů (Diff / Current State):** UI nabídne uživateli náhled na aktuální data na serveru s vyznačením, co se změnilo.
+3. **Vědomé rozhodnutí uživatele:** Uživatel má možnost:
+   * převzít aktuální data ze serveru (Reload),
+   * upravit svou změnu v kontextu nových dat a odeslat ji znovu s novým číslem verze,
+   * operaci zrušit.
+4. **Zákaz skrytého auto-merge:** Žádný textový obsah nesmí být sloučen automaticky na pozadí bez vědomí a schválení uživatelem.
+
+---
+
+### 27.22 Vazba souběhu na doménové události (Domain Events)
+
+V návaznosti na Step 10 platí striktní pravidlo integrity mezi souběhem a událostmi:
+
+* **Při vzniku konfliktu (`409 Conflict`):**
+  * Transakce neprovede commit.
+  * **Nevzniká žádná doménová událost.**
+  * Systém nesmí publikovat např. `TASK_UPDATED` o změně, která byla z důvodu konfliktu verzí odmítnuta.
+* **Při úspěšném vyřešení (Commit):**
+  * Verze entity se posune na novou hodnotu.
+  * Doménová událost je zapsána do Outboxu a následně publikována s novým číslem verze v payloadu.
+
+---
+
+### 27.23 Vazba souběhu na auditní stopu (AuditLog)
+
+Auditní stopa systému (`AuditLog`) slouží k záznamu skutečné historie doménových změn:
+
+* Do tabulky `AuditLog` se zapisují **výhradně úspěšně potvrzené změny stavu** (`previous_state` ──► `new_state`).
+* Konfliktní odmítnutí požadavku (`409 Conflict`) se do doménového auditu nezapisuje jako změna stavu objektu, neboť žádná změna stavu nenastala.
+* Případné bezpečnostní monitorování neobvykle vysokého počtu konfliktů může být vedeno v technických/bezpečnostních systémových logách, nikoliv však v doménovém AuditLogu Nástěnky.
+
+---
+
+### 27.24 Soft-delete a souběžný přístup
+
+Pro entity podléhající logickému smazání (např. `Board.deleted_at`, `User.deleted_at`, `User.is_active`):
+
+1. **Zákaz souběžných úprav smazaného objektu:** Jakmile transakce nastaví `deleted_at = Timestamp`, jakýkoliv souběžný požadavek na úpravu tohoto objektu je vyhodnocen jako konflikt (`409 Conflict`) nebo neexistující entita (`404 Not Found`).
+2. **Konzistence deaktivovaného účtu:** Pokud je uživatelský účet deaktivován (`is_active = false`), souběžné požadavky přicházející s dřívější session tohoto uživatele jsou okamžitě odmítnuty a nemohou provést zápis do databáze.
+
+---
+
+### 27.25 Řízený hard-delete a souběžný přístup
+
+Pro nevratné operace `DELETE_TASK` a `DELETE_AREA`:
+
+1. **Validace verze před smazáním:** Požadavek na smazání musí specifikovat očekávanou verzi objektu. Pokud byl úkol mezitím zásadním způsobem změněn jiným uživatelem, pokus o smazání narazí na `409 Conflict`, aby se předešlo nechtěnému smazání čerstvě aktualizované práce.
+2. **Atomický rozpad závislostí:** Při smazání oblasti probíhá odstranění oblasti, všech jejích úkolů, účastníků a týmových příloh v jediné transakci. Souběžný požadavek nemůže vytvořit sirotčí úkol bez oblasti.
+3. **Nezávislost auditu:** Po fyzickém odstranění záznamů z provozních tabulek zůstává v databázi trvale zachován záznam `DELETE_TASK` resp. `DELETE_AREA` v `AuditLogu`.
+
+---
+
+### 27.26 Bezpečnostní invarianty Step 11
+
+Architektura souběžného přístupu, konfliktů a idempotence garantuje dodržení následujících osmnácti invariantů:
+
+1. **Zákaz tichého přepisu:** Tichý přepis cizí změny (implicitní Last-Write-Wins) je v celém systému zakázán.
+2. **Detekovatelnost zastaralých dat:** Systém vždy spolehlivě detekuje práci klienta se zastaralou verzí dat.
+3. **Povinné optimistické zamykání:** Běžné úpravy sdílených doménových entit podléhají verifikačnímu mechanismu OCC (nebo ekvivalentnímu spolehlivému zámku).
+4. **Transakční ochrana kritických rolí:** Operace manipulující s rolemi a vlastnictvím jsou transakčně serializovatelné.
+5. **Právě jeden Owner:** Aktivní Nástěnka nemá v žádném časovém okamžiku dva a více Ownerů.
+6. **Žádná Nástěnka bez Ownera:** Vlastnictví Nástěnky nelze opustit ani převést tak, aby Nástěnka zůstala bez platného Ownera.
+7. **Maximálně jeden Manager:** Žádná Nástěnka nemá v žádném okamžiku více než jednoho platného Managera (`0..1`).
+8. **Unikátnost členství:** Dvojice `(user_id, board_id)` je unikátní; souběžné požadavky nemohou vytvořit duplicitní členství.
+9. **Zákaz sirotčích stavů:** Souběžné operace nad Tasky a Oblastmi nesmí vytvořit úkol bez Nástěnky ani úkol odkazující na smazanou oblast.
+10. **Atomicita řízeného hard-delete:** Fyzické odstranění úkolu či oblasti probíhá v nedělitelné transakci včetně auditního zápisu.
+11. **Idempotence vytvářecích operací:** Opakování požadavku se stejným Idempotency Key nesmí vytvořit duplicitní záznam.
+12. **Nezávislost konceptů:** Idempotence a Concurrency Control jsou samostatné mechanismy řešící odlišná rizika.
+13. **Sémantická čistota HTTP 409:** Kód `409 Conflict` reprezentuje výhradně skutečný stavový konflikt dat či verzí.
+14. **Čistota událostí při konfliktu:** Neúspěšná či konfliktovaná transakce nikdy nepublikuje potvrzující doménovou událost.
+15. **Integrita AuditLogu:** Do doménového auditu se zapisují pouze skutečně potvrzené změny stavu.
+16. **Revalidace při Retry:** Každý opakovaný pokus musí znovu projít plnou autorizační kontrolou.
+17. **Oddělení verze od autorizace:** Znalost správného čísla verze objektu nezakládá oprávnění k jeho editaci; autorizace se vyhodnocuje nezávisle.
+18. **Constraint jako poslední linie obrany:** Databázová integritní omezení zůstávají finální a nepřekročitelnou bariérou proti nekonzistentním stavům.
+
+---
+
+### 27.27 Rozhodnutí odložená do implementační fáze
+
+Následující technologická a implementační rozhodnutí **nejsou v tomto architektonickém kroku schválena ani závazně vybrána** a jejich volba je záměrně odložena do technické fáze:
+
+* **Konkrétní reprezentace OCC tokenu:** Zda bude použito celočíselné pole `version`, časové razítko `updated_at`, nebo HTTP hlavičky `ETag` / `If-Match`.
+* **Fyzické úložiště Idempotency klíčů:** Zda budou klíče ukládány v dedikované relační tabulce, v cache (Redis) či v aplikační paměti.
+* **Doba retence Idempotency klíčů:** Konkrétní časový limit pro uchovávání výsledků zpracovaných klíčů (např. 24 až 48 hodin).
+* **Konkrétní databázový locking mechanismus:** Volba mezi explicitním `SELECT ... FOR UPDATE`, optimistickým update filtrem, či specifickou transakční izolací relačního enginu.
+* **Technické detaily UX pro řešení konfliktů:** Zda bude v rozhraní integrována vizuální diff komponenta či standardní dialog s výzvou k obnovení dat.
+* **Případná strategie distribuovaného zamykání:** Pro multi-node infrastrukturu (např. Redlock algoritmus) – pro 1. verzi není vyžadováno.
+
+> [!NOTE]
+> Step 11 definuje logická pravidla, bezpečnostní bariéry a konzistenční invarianty. Konkrétní programové knihovny a databázové struktury budou zvoleny v navazujících implementačních krocích.
+
+---
+
+## 28. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -3530,3 +3958,4 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 | **0.6.0** | 19. 9. 2026 | Step 8 – Databázové schéma, primární a cizí klíče, constrainty, referenční integrita, transakční hranice a databázové invarianty. | Antigravity / Product Owner |
 | **0.7.0** | 19. 9. 2026 | Step 9 – Autentizace, identity, session, životní cyklus přihlášení, ochrana identity Actor a oddělení autentizace od autorizace. | Antigravity / Product Owner |
 | **0.8.0** | 19. 9. 2026 | Step 10 – Doménové události, systémové reakce, notifikační model, recipient policy, spolehlivé předávání událostí, idempotence a oddělení Event / Notification / Audit. | Antigravity / Product Owner |
+| **0.9.0** | 19. 9. 2026 | Step 11 – Souběžný přístup, optimistic concurrency control, stale data, race conditions, konflikty změn, idempotence, retry a transakční konzistence. | Antigravity / Product Owner |
