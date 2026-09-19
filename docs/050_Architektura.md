@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 1.2.0<br>
+**Verze:** 1.3.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -5916,7 +5916,613 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 
 ---
 
-## 33. Historie verzí
+## 34. Step 15 – Výběr technologického stacku a Architecture Decision Records
+
+Tato kapitola představuje zásadní milník v architektonickém návrhu systému Nástěnka: **přechod od technologické neutrality ke konkrétním, závazně schváleným technologickým volbám**. Výběr technologií nevychází z módních trendů, nýbrž striktně z doménových, bezpečnostních a provozních požadavků specifikovaných ve Step 5 až Step 14. Každá klíčová volba je precizně zdokumentována formou záznamu o architektonickém rozhodnutí (**Architecture Decision Record – ADR**).
+
+---
+
+### 34.1 Úvod a přechod z technologické neutrality
+
+Až do Step 14 byl systém Nástěnka definován jako technologicky neutrální specifikace entit, stavů, oprávnění, datových toků a transakčních hranic. Step 15 stanovuje konkrétní programové nástroje, běhové prostředí, databázový engine, knihovny a infrastrukturu.
+
+Platí však nepřekročitelná architektonická zásada:
+> [!IMPORTANT]
+> **Technologie slouží doméně, nikoliv doména technologii.**
+> Žádná technologická volba nesmí změnit ani oslabit schválená byznys pravidla, invarianty, transakční hranice, autorizační model ani principy oddělení týmového a osobního prostoru.
+
+---
+
+### 34.2 Hodnoticí kritéria výběru technologií
+
+Kandidátní technologie byly hodnoceny na základě osmnácti rigorózních kritérií:
+1. **Otevřený kód a licence:** Výhradně permisivní licence (MIT, Apache 2.0, PostgreSQL license) bez rizika vendor lock-in či licenčních poplatků.
+2. **Možnost self-hostingu:** 100% schopnost provozu na vlastním serveru, lokální síti (LAN) nebo privátním NAS/VPS bez závislosti na proprietárním cloudu.
+3. **Dlouhodobá udržitelnost a stabilita:** Technologie s pevnou komunitní základnou, předvídatelným cyklem vydávání a garantovanou dlouhodobou podporou (LTS).
+4. **Bezpečnost:** Prověřená odolnost vůči běžným zranitelnostem (OWASP), podpora bezpečných HTTP-only cookies, parametrizovaných dotazů a striktní izolace relací.
+5. **End-to-End TypeScript a typová bezpečnost:** Nativní podpora TypeScriptu od databázového schématu přes doménové entity, DTO kontrakty až po frontendové komponenty.
+6. **Vhodnost pro týmovou spolupráci:** Spolehlivá obsluha souběžných požadavků více uživatelů nad sdílenými Nástěnkami.
+7. **Responzivní web pro desktop i mobil:** Nativní podpora dotykového ovládání, rychlé načítání na mobilních sítích v terénu a plynulý chod na desktopu.
+8. **Ergonomie vývoje s Antigravity (AI-friendly):** Čitelný, transparentní kód bez skryté magie, metaprogramování a nepřehledných abstrakcí.
+9. **Testovatelnost:** Možnost bleskového spouštění jednotkových testů v paměti a deterministických integračních testů s reálnou databází.
+10. **Kvalita dokumentace a ekosystému:** Rozsáhlá, aktuální a komunitně ověřená dokumentace.
+11. **Jednoduchost nasazení:** Snadná kontejnerizace a reprodukovatelný start jedním příkazem.
+12. **Nízká provozní náročnost:** Nízké nároky na RAM a CPU, možnost běhu na úsporném hardwaru.
+13. **Absence vendor lock-in:** Nezávislost na specifických cloudových platformách (např. AWS, Vercel, Firebase).
+14. **Nulové licenční a minimální provozní náklady.**
+15. **Vhodnost pro malý až střední tým:** Přiměřenost architektury bez zbytečného overengineeringu.
+16. **Kompatibilita se Step 5–14:** Stoprocentní soulad se všemi dříve definovanými invarianty a transakčními pravidly.
+17. **Snadné zálohování:** Přímočaré zálohování relačních dat a konfigurace.
+18. **Modulární monolit:** Preferovaný přístup sdružení do jednoho přehledného a udržitelného projektu před distribuovaným chaosem mikroslužeb.
+
+---
+
+### 34.3 Souhrnný přehled Architecture Decision Records (ADR Index)
+
+| ID | Oblast rozhodnutí | Schválená technologie / volba | Status |
+|---|---|---|---|
+| **ADR-001** | Frontend Framework | **Next.js (App Router)** | Accepted |
+| **ADR-002** | UI / Komponentová strategie | **Tailwind CSS + Radix UI primitives (Shadcn pattern)** | Accepted |
+| **ADR-003** | Aplikační jazyk | **TypeScript (Strict Mode)** | Accepted |
+| **ADR-004** | Běhové prostředí (Runtime) | **Node.js 24 LTS** | Accepted |
+| **ADR-005** | Primární databáze | **PostgreSQL 18.x** | Accepted |
+| **ADR-006** | Persistenční vrstva a ORM | **Drizzle ORM** | Accepted |
+| **ADR-007** | Autentizační poskytovatel | **Better Auth** | Accepted |
+| **ADR-008** | Model správy relací (Session) | **Server-side DB Session via Secure HTTP-Only Cookies** | Accepted |
+| **ADR-009** | Autorizační architektura | **Dedicated Application & Domain Policy Layer (ActorContext)** | Accepted |
+| **ADR-010** | Přenosová vrstva a API | **REST-like HTTP API (JSON)** | Accepted |
+| **ADR-011** | Validační knihovna | **Zod** | Accepted |
+| **ADR-012** | Databázové migrace | **Drizzle Kit (Explicit Versioned SQL Migrations in Git)** | Accepted |
+| **ADR-013** | Real-time přenos dat | **Periodic Polling / SWR pattern v1; SSE/WebSocket Deferred** | Accepted / Deferred |
+| **ADR-014** | Doménové události a Outbox | **PostgreSQL Outbox Table + In-Process Worker** | Accepted |
+| **ADR-015** | Notifikační architektura | **In-app Notification Service via Outbox; Email/Push Deferred** | Accepted / Deferred |
+| **ADR-016** | Vyhledávací mechanismus | **PostgreSQL Full-Text Search (tsvector) + pg_trgm** | Accepted |
+| **ADR-017** | Strategie mezipaměti (Cache) | **No Distributed Cache in v1 (Direct Indexed DB Queries)** | Deferred |
+| **ADR-018** | Úložiště souborových příloh | **Deferred (Modular Adapter Ready for S3/Local Storage)** | Deferred |
+| **ADR-019** | Zpracování úloh na pozadí | **In-Process Scheduled Runner with DB Lock** | Accepted |
+| **ADR-020** | Protokolování a pozorovatelnost | **Pino Structured JSON Logging + Health Endpoint; APM Deferred**| Accepted / Deferred |
+| **ADR-021** | Testovací stack | **Vitest (Unit, App, Integration) + Playwright (E2E)** | Accepted |
+| **ADR-022** | Balíčkovací manažer | **npm** | Accepted |
+| **ADR-023** | Nástroje pro kvalitu kódu | **ESLint 9 + Prettier + TypeScript strict check** | Accepted |
+| **ADR-024** | Model nasazení | **Self-hosted Docker Compose (Next.js + PostgreSQL)** | Accepted |
+| **ADR-025** | CI/CD Pipeline | **GitHub Actions Verification + Manual Push & Deployment** | Accepted |
+| **ADR-026** | Konfigurace a správa tajemství | **Environment Variables Validated via Zod at Startup** | Accepted |
+| **ADR-027** | Licenční politika | **Exclusively Permissive Open Source Stack (MIT/Apache 2.0/PostgreSQL)**| Accepted |
+
+---
+
+### 34.4 Detailní Architecture Decision Records (ADR-001 až ADR-027)
+
+#### ADR-001: Frontend Framework
+* **Status:** Accepted
+* **Context:** Aplikace vyžaduje moderní, responzivní webové rozhraní pro desktop i mobil, rychlé načítání, podporu TypeScriptu, efektivní směrování a úzké propojení s backendovým API v rámci modulárního monolitu.
+* **Decision:** Vybíráme **Next.js (App Router)** na bázi Reactu.
+* **Alternatives considered:** Čistý React SPA (Vite + React Router), SvelteKit, Remix / React Router v7.
+* **Reasons:** Next.js poskytuje robustní full-stack zázemí v jednom projektu. Server Components umožňují bleskové načtení počátečního stavu bez blikání a bezpečné zpracování na serveru. Vestavěný Route Handlers systém ideálně obsluhuje REST-like API vrstvu. Vynikající integrace s TypeScriptem a obrovská podpora komunity a vývojových nástrojů.
+* **Consequences:** Vývoj probíhá v jednotném TypeScript repozitáři. Je nutné dbát na striktní oddělení klientských komponent (`'use client'`) od serverové doménové logiky, aby nedocházelo k úniku serverového kódu na klienta.
+* **Migration / replacement impact:** Přechod na jiný framework by vyžadoval reimplementaci routingu a prezentační vrstvy; doménová a aplikační vrstva zůstává netknuta díky striktnímu oddělení dle Step 14.
+* **Relation to architecture:** Step 13 (UI/UX architektura, responzivita, navigace), Step 14 (Presentation a API vrstva).
+
+---
+
+#### ADR-002: UI / Komponentová strategie
+* **Status:** Accepted
+* **Context:** Systém potřebuje čisté, vysoce ergonomické, přístupné (a11y) a responzivní uživatelské rozhraní bez zbytečných vizuálních kudrlinek (Anti-Jira princip) s plnou podporou českého jazyka.
+* **Decision:** Vybíráme **Tailwind CSS** v kombinaci s **headless komponentovými primitivy Radix UI** (architektonický vzor **Shadcn UI**).
+* **Alternatives considered:** Těžké komponentové knihovny (MUI, Ant Design), Chakra UI, čisté CSS moduly psané ručně.
+* **Reasons:** Přístup Shadcn UI nekopíruje monolitickou závislost z npm balíčku, ale vkládá přístupný kód přímo do projektu pod naši plnou kontrolu. Nulový vendor lock-in. Dokonalá přístupnost (správa focusu klávesnice, ARIA atributy). Snadná tvorba velkých dotykových prvků pro mobilní telefon a kompaktních přehledů pro desktop.
+* **Consequences:** Kód komponent vlastníme přímo v repozitáři. Vyžaduje disciplínu při dodržování designových tokenů a barevné palety.
+* **Migration / replacement impact:** Výměna komponentové vrstvy je lokální záležitostí složky UI komponent bez dopadu na aplikační logiku.
+* **Relation to architecture:** Step 13 (UX principy, přístupnost, mobilní ergonomie, destruktivní dialogy).
+
+---
+
+#### ADR-003: Aplikační jazyk
+* **Status:** Accepted
+* **Context:** Celý systém vyžaduje nekompromisní typovou bezpečnost pro doménové entity, stavové přechody, autorizační kontexty, DTO přenosy i databázové dotazy.
+* **Decision:** Vybíráme **TypeScript** v nejpřísnějším nastavení (**Strict Mode**).
+* **Alternatives considered:** JavaScript, polyglot stack (Python/Go backend + TS frontend).
+* **Reasons:** Umožňuje sdílet typové definice mezi backendem a frontendem v rámci modulárního monolitu. Striktní typování eliminuje celé třídy chyb za běhu (`undefined is not a function`). Zákaz implicitního `any` vynucuje explicitní modelování doménových konceptů.
+* **Consequences:** Vývoj vyžaduje psaní typových definic a schémat. Zvyšuje jistotu při refaktoringu a zrychluje práci s asistentem Antigravity.
+* **Migration / replacement impact:** Přechod na jiný jazyk by znamenal kompletní přepsání; volba TypeScriptu je strategickým základem projektu.
+* **Relation to architecture:** Step 6–14 (typová integrita všech doménových i technických struktur).
+
+---
+
+#### ADR-004: Běhové prostředí (Runtime)
+* **Status:** Accepted
+* **Context:** Je vyžadováno stabilní, dlouhodobě podporované, bezpečné a univerzálně dostupné běhové prostředí pro produkční self-hosting.
+* **Decision:** Vybíráme **Node.js 24 LTS**.
+* **Alternatives considered:** Node.js 26 (Current), Bun, Deno.
+* **Reasons:** Node.js 24 LTS poskytuje maximální možnou stabilitu a předvídatelnost pro produkční nasazení s garantovanou víceletou podporou bezpečnostních záplat. Bun a Deno nabízejí rychlost, avšak pro dlouhodobý stabilní self-hosting představuje Node.js LTS bezkonkurenční jistotu s nejširší podporou knihoven. Node.js 26 Current není preferován z důvodu absence LTS statusu.
+* **Consequences:** Využití moderních standardů Node.js (nativní fetch, ESM moduly, stabilní podpora Worker threads).
+* **Migration / replacement impact:** Node.js je průmyslovým standardem; migrace na novější LTS verze probíhá hladce v rámci plánované údržby.
+* **Relation to architecture:** Step 14 (Infrastrukturní vrstva, server-side Clock).
+
+---
+
+#### ADR-005: Primární databáze
+* **Status:** Accepted
+* **Context:** Systém Nástěnka vyžaduje robustní relační databázi s nekompromisní transakční integritou (ACID), podporou parciálních unikátních indexů, cizích klíčů s kaskádovým chováním, pokročilým řízením souběhu (OCC), transakčním outboxem a spolehlivým full-textovým vyhledáváním.
+* **Decision:** Vybíráme **PostgreSQL 18.x**.
+* **Alternatives considered:** PostgreSQL 19 Beta, MySQL 8.x, SQLite, MongoDB.
+* **Reasons:** PostgreSQL je absolutní špičkou v open-source relačních databázích. Podporuje přesně ty konstrukce, které vyžaduje Step 8 a Step 11: parciální unikátní indexy pro garanci max. 1 Managera a unikátnost členství `UNIQUE(user_id, board_id)`, transakční izolaci Read Committed / Repeatable Read / Serializable, rozšíření `pg_trgm` a `tsvector` pro vyhledávání v češtině. PostgreSQL 18 je stabilní ověřená řada (verze 19 Beta je pro produkci vyloučena).
+* **Consequences:** Nutnost provozovat PostgreSQL instanci (v Docker kontejneru). Vynikající nástroje pro zálohování (`pg_dump`) a replikaci.
+* **Migration / replacement impact:** Změna relačního enginu by vyžadovala úpravu migračních skriptů; aplikační logika zůstává chráněna repozitářovou vrstvou.
+* **Relation to architecture:** Step 8 (Databázové schéma, constrainty, indexy), Step 11 (Souběh, OCC), Step 12 (Search, Query).
+
+---
+
+#### ADR-006: Persistenční vrstva a ORM
+* **Status:** Accepted
+* **Context:** Je vyžadován nástroj pro přístup k databázi, který plně podporuje TypeScript, je transparentní vůči generovanému SQL, nebrání použití specifických PostgreSQL constraintů a indexů, podporuje transakce a nezavádí zbytečnou abstrakční režii.
+* **Decision:** Vybíráme **Drizzle ORM**.
+* **Alternatives considered:** Prisma ORM, TypeORM, Kysely, čistý `pg` ovladač.
+* **Reasons:** Drizzle ORM představuje tenkou typovou vrstvu nad SQL („If you know SQL, you know Drizzle“). Na rozdíl od Prismy negeneruje těžkopádný binární engine, má nulovou režii při startu (Serverless / Node friendly), plně podporuje transakce, parciální indexy a pokročilé SQL výrazy potřebné pro OCC a atomický převod vlastnictví. Kód schématu je přímo v TypeScriptu a ideálně se integruje s AI kódováním Antigravity.
+* **Consequences:** Schéma databáze je definováno v kódu a generuje čisté SQL migrace. Umožňuje přímou kontrolu nad efektivitou dotazů (prevence N+1).
+* **Migration / replacement impact:** Repozitářová vrstva (Step 14) izoluje doménu od Drizzle; případná změna ORM by se dotkla pouze implementace repozitářů.
+* **Relation to architecture:** Step 8 (Schéma a integrita), Step 11 (Optimistic locking), Step 12 (Query efficiency, N+1 prevence), Step 14 (Repository vrstva).
+
+---
+
+#### ADR-007: Autentizační poskytovatel
+* **Status:** Accepted
+* **Context:** Systém potřebuje bezpečné, plně self-hostované autentizační řešení s podporou přihlašování jménem/e-mailem a heslem, bezpečným hashováním, ochranou proti útokům hrubou silou, správou hesel a budoucí možností dvoufaktorového ověření.
+* **Decision:** Vybíráme **Better Auth**.
+* **Alternatives considered:** Auth.js (NextAuth), Supabase Auth, vlastní hand-crafted autentizace od nuly.
+* **Reasons:** Better Auth je moderní, 100% open-source a self-hosted framework navržený pro TypeScript, PostgreSQL a Drizzle ORM. Na rozdíl od proprietárních služeb (Supabase, Clerk) uchovává veškerá data v naší vlastní PostgreSQL databázi. Poskytuje čisté oddělení autentizační identity od interního doménového modelu `User.id` (přesně dle požadavku Step 9 a Step 14). Eliminuje chyby a bezpečnostní rizika psaní vlastního kryptografického kódu.
+* **Consequences:** Autentizační tabulky spravuje Better Auth v dedikovaném schématu/tabulkách propojených s naším Drizzle modelem.
+* **Migration / replacement impact:** Uživatelská hesla a identity jsou v naší databázi v otevřených standardech; migrace k jinému řešení je kdykoliv možná bez závislosti na třetí straně.
+* **Relation to architecture:** Step 9 (Autentizace, session, identity), Step 14 (Authentication vrstva a ActorContext).
+
+---
+
+#### ADR-008: Model správy relací (Session Model)
+* **Status:** Accepted
+* **Context:** Je nutné zajistit správu přihlášení s možností okamžité revokace při odchodu uživatele z Nástěnky, deaktivaci účtu nebo bezpečnostním incidentu.
+* **Decision:** Vybíráme **Server-Side Database Session** identifikovanou kryptograficky bezpečným tokenem v **HTTP-Only, Secure, SameSite=Lax cookie**.
+* **Alternatives considered:** Čisté bezstavové JWT tokeny v localStorage, JWT v cookie, Redis session store.
+* **Reasons:** Bezstavové JWT tokeny nelze spolehlivě okamžitě revokovat bez složitých blacklistů. Server-side session v PostgreSQL umožňuje okamžitou revokaci smazáním řádku relace. Ukládání v HTTP-only cookie eliminuje riziko krádeže tokenu přes XSS útoky. Pro první verzi není nutné zavádět Redis; relační tabulka session v PostgreSQL s indexem poskytuje bleskovou odezvu.
+* **Consequences:** Každý autorizovaný požadavek validuje existenci session vůči databázi (optimalizováno indexem nad session tokenem).
+* **Migration / replacement impact:** V budoucnu lze při extrémní zátěži úložiště session transparentně přesunout do Redisu bez změny rozhraní.
+* **Relation to architecture:** Step 9 (Životní cyklus session, revokace), Step 14 (Authentication vrstva).
+
+---
+
+#### ADR-009: Autorizační architektura
+* **Status:** Accepted
+* **Context:** Autorizace v Nástěnce je komplexní: kombinuje globální roli `ADMIN`, členství na Nástěnce, role `OWNER`, `MANAGER`, `MEMBER`, objektová práva (Hlavní řešitel, Spoluřešitel) a stav entity.
+* **Decision:** Vybíráme **Dedikovanou aplikační autorizační vrstvu (Policy Engine) založenou na serverovém `ActorContext`**.
+* **Alternatives considered:** Přenesení autorizace do UI, generické RBAC knihovny (CASL), databázové Row-Level Security (RLS).
+* **Reasons:** Doménová pravidla Nástěnky vyžadují vyhodnocování kontextuálních vztahů (např. *„Hlavní řešitel může odebrat spoluřešitele, ale nemůže smazat úkol, pokud není Manager“*). Centralizované čisté TypeScript policies v aplikační vrstvě zaručují dokonalou testovatelnost, transparentnost a nemožnost obejití z klienta. RLS v databázi by zbytečně zkomplikovalo migraci a ladění.
+* **Consequences:** Každý Use Case povinně volá autorizační metodu před provedením operace.
+* **Migration / replacement impact:** Autorizace je čistým kódem v aplikační vrstvě, nezávislým na externích frameworkách.
+* **Relation to architecture:** Step 5 (Oprávnění), Step 7 (API autorizační hranice), Step 14 (Authorization vrstva).
+
+---
+
+#### ADR-010: Přenosová vrstva a API kontrakt
+* **Status:** Accepted
+* **Context:** Komunikace mezi klientem a serverem musí být spolehlivá, přímočará, snadno laditelná, kompatibilní se Step 7 a Step 12 a otevřená pro budoucí integrace.
+* **Decision:** Vybíráme **REST-like HTTP API přenášející JSON payloady**.
+* **Alternatives considered:** tRPC, GraphQL, gRPC.
+* **Reasons:** REST-like API s jasnou sémantikou HTTP kódů (`200`, `201`, `400`, `401`, `403`, `404`, `409`, `422`) přesně odpovídá kontraktům definovaným ve Step 7. Je technologicky neutrální, univerzálně srozumitelné, snadno testovatelné nástroji typu curl a připravené pro libovolné budoucí klienty (mobilní aplikace, integrace). tRPC by vytvořilo těsnou vazbu na TypeScript klienta a GraphQL by představovalo neúměrnou režii.
+* **Consequences:** API endpointy jsou implementovány pomocí Next.js Route Handlers s využitím Zod validace.
+* **Migration / replacement impact:** Standardní HTTP/JSON rozhraní má nejdelší životnost v softwarovém inženýrství.
+* **Relation to architecture:** Step 7 (API operace), Step 12 (Query kontrakty), Step 14 (Transportní vrstva).
+
+---
+
+#### ADR-011: Validační knihovna
+* **Status:** Accepted
+* **Context:** Systém potřebuje striktní validaci transportních vstupů, formulářových dat i konfigurace prostředí s automatickým odvozením TypeScript typů.
+* **Decision:** Vybíráme knihovnu **Zod**.
+* **Alternatives considered:** Valibot, Yup, Joi, ručně psané type guardy.
+* **Reasons:** Zod je prověřeným standardem v TypeScript ekosystému s vynikající integrací do Next.js, Better Auth a formulářových knihoven. Umožňuje deklarativní definici schémat, ze kterých se automaticky odvozují statické TypeScript typy (`z.infer<typeof schema>`). Zajišťuje 1. a částečně 2. úroveň validační architektury (Step 14).
+* **Consequences:** Validační schémata jsou sdílena mezi API endpointy a klientskými formuláři.
+* **Migration / replacement impact:** Zod schémata lze v případě potřeby snadno transponovat do jiných validačních formátů.
+* **Relation to architecture:** Step 14 (Čtyřúrovňová validace, DTO modely).
+
+---
+
+#### ADR-012: Strategie databázových migrací
+* **Status:** Accepted
+* **Context:** Databázové schéma se musí vyvíjet kontrolovaným, auditovatelným, reprodukovatelným a bezpečným způsobem. Je přísně zakázáno neřízené modifikování produkční databáze.
+* **Decision:** Vybíráme **Drizzle Kit s verzovanými SQL migračními soubory uloženými v Gitu**.
+* **Alternatives considered:** Automatický runtime sync (`db push`), Flyway, Prisma Migrate.
+* **Reasons:** Drizzle Kit generuje čisté, lidsky čitelné SQL soubory (např. `0001_initial.sql`), které jsou součástí verzovací historie v repozitáři. Každá změna schématu je před nasazením revidována vývojářem i Antigravity. Zákaz `db push` na produkci garantuje, že nedojde k nechtěné ztrátě dat ani poškození constraintů.
+* **Consequences:** Před nasazením nové verze aplikace probíhá exekuce verzovaných migrací v transakci.
+* **Migration / replacement impact:** SQL migrace jsou nezávislé na nástroji a lze je v případě potřeby spustit standardním PostgreSQL klientem `psql`.
+* **Relation to architecture:** Step 8 (Databázové schéma a constrainty), Závazná pravidla pro Git.
+
+---
+
+#### ADR-013: Real-time přenos dat
+* **Status:** Accepted (pro Polling v1) / Deferred (pro WebSocket/SSE)
+* **Context:** Uživatelé potřebují vnímat změny stavu úkolů a notifikací prováděné ostatními členy týmu. Je však nutné vyhnout se neúměrné infrastrukturní zátěži a udržet systém jednoduchý.
+* **Decision:** Pro verzi 1.0 volíme **Periodické inteligentní dotazování (Smart Polling / SWR pattern)** při aktivním okně prohlížeče. Implementace trvalých **WebSocketů / Server-Sent Events (SSE) je odložena (Deferred)**.
+* **Alternatives considered:** WebSockets, Server-Sent Events (SSE), externí managed real-time (Pusher, Ably).
+* **Reasons:** V souladu s Invariantem 20 ze Step 13 platí: *„Real-time událost není zdroj bezpečnostní pravdy.“* Databáze zůstává jedinou autoritou. Pro malý až střední tým představuje intervalové dotazování (např. každých 15–30 sekund při aktivním okně a okamžitě při návratu focusu) naprosto dostačující ergonomii bez nutnosti udržovat stavová spojení a řešit složité reconnecty přes mobilní sítě.
+* **Consequences:** Výrazné zjednodušení backendu i Docker deploymentu; nulové riziko vyčerpání socketů.
+* **Migration / replacement impact:** Až vzroste potřeba okamžitých push notifikací, SSE lze snadno doplnit jako infrastrukturní adaptér nad tabulkou Outboxu.
+* **Relation to architecture:** Step 10 (Události), Step 13 (Real-time UX a optimismus).
+
+---
+
+#### ADR-014: Doménové události a Transactional Outbox
+* **Status:** Accepted
+* **Context:** Doménové události musí být spolehlivě uloženy současně se změnou doménového stavu, aby nedošlo ke ztrátě události při pádu procesu ani k odeslání události při rollbacku transakce.
+* **Decision:** Vybíráme **Transactional Outbox tabulku v PostgreSQL zpracovávanou interním periodickým workerem**.
+* **Alternatives considered:** Externí message broker (RabbitMQ, Apache Kafka), synchronní in-memory event bus.
+* **Reasons:** Zápis události do tabulky `outbox_events` probíhá uvnitř stejné ACID transakce jako uložení úkolu. Tím je stoprocentně zaručena konzistence bez nutnosti provozovat externí brokery typu Kafka nebo RabbitMQ, které by pro daný rozsah představovaly masivní overengineering.
+* **Consequences:** Jednoduchá tabulka v PostgreSQL uchovává nezpracované události; interní worker je čte a předává konzumentům.
+* **Migration / replacement impact:** V případě masivního růstu lze Outbox Processor přepojit na externí broker bez zásahu do doménové logiky.
+* **Relation to architecture:** Step 10 (Doménové události), Step 14 (Outbox pattern a transakční hranice).
+
+---
+
+#### ADR-015: Notifikační architektura
+* **Status:** Accepted (pro In-app v1) / Deferred (pro E-mail a Push)
+* **Context:** Uživatelé potřebují být informováni o přiřazení úkolu, změnách a organizačních událostech v souladu s Recipient Policy a pravidly soukromí.
+* **Decision:** Pro verzi 1.0 schvalujeme **In-app notifikační službu (uložení v dedikované PostgreSQL tabulce `notifications`)**. Externí transporty (**E-mailové notifikace a mobilní Push notifikace**) jsou **odloženy (Deferred)** do navazující fáze.
+* **Alternatives considered:** Odesílání e-mailů při každé události v v1, integrace Firebase Cloud Messaging.
+* **Reasons:** In-app notifikace plně pokrývají základní týmovou potřebu v rozhraní Nástěnky (zvoneček, badge, seznam nepřečtených zpráv dle Step 10 a 13). E-mailový odesílač vyžaduje konfiguraci SMTP serveru a správu šablon; jeho odložením udržíme první verzi přímočarou a soběstačnou.
+* **Consequences:** Notifikace vznikají spolehlivě v databázi konzumací událostí z Outboxu a uživatel je vidí přímo v aplikaci.
+* **Migration / replacement impact:** E-mailový a WebPush adaptér budou doplněny jako noví konzumenti Outboxu bez zásahu do stávajícího kódu.
+* **Relation to architecture:** Step 10 (Notifikační model, Recipient policy), Step 13 (Notifikační UI), Step 14 (Notification Service).
+
+---
+
+#### ADR-016: Vyhledávací mechanismus
+* **Status:** Accepted
+* **Context:** Hledání úkolů dle názvu a popisu musí být rychlé, spolehlivé, musí respektovat český jazyk (diakritiku) a probíhat striktně uvnitř Authorized Query Scope dané Nástěnky.
+* **Decision:** Vybíráme **Nativní PostgreSQL Full-Text Search (`tsvector` / GIN index) v kombinaci s rozšířením `pg_trgm` (trigramy)**.
+* **Alternatives considered:** Elasticsearch / OpenSearch, Meilisearch, externí SaaS vyhledávače.
+* **Reasons:** PostgreSQL plně postačuje pro veškeré vyhledávací scénáře Nástěnky. Umožňuje přesnou shodu, substring i full-textové hledání přímo v SQL dotazu svázaném s podmínkou členství na Nástěnce (`board_id`). Zabraňuje nutnosti synchronizovat data do externího vyhledávacího enginu a eliminuje riziko úniku dat mimo autorizační rámec.
+* **Consequences:** Žádná dodatečná infrastruktura; vyhledávání běží přímo v primární databázi s využitím GIN indexu.
+* **Migration / replacement impact:** Pokud by objem textu v budoucnu přesáhl možnosti PostgreSQL, search engine lze zapojit přes SearchQueryService (Step 14).
+* **Relation to architecture:** Step 12 (Vyhledávání a filtry, ochrana soukromí), Step 14 (SearchQueryService).
+
+---
+
+#### ADR-017: Strategie mezipaměti (Cache Strategy)
+* **Status:** Deferred / No Cache initially
+* **Context:** Je nutné posoudit zavedení distribuované mezipaměti (např. Redis) pro urychlení čtení.
+* **Decision:** **V první verzi NEZAVÁDÍME žádnou externí distribuovanou mezipaměť (Deferred).** Dotazy směřují přímo do optimalizované a indexované databáze PostgreSQL.
+* **Alternatives considered:** Redis cache pro Board data a oprávnění, in-memory Node.js cache.
+* **Reasons:** V souladu se Step 12 a Step 14 platí: *„Mezipaměť nesmí nikdy obejít ani prodloužit platnost odebraných práv.“* Zavedení cache u dynamických oprávnění přináší enormní riziko zobrazení neautorizovaných dat (stale permissions). Při správně navržených indexech (Step 8) odpovídá PostgreSQL na autorizované dotazy v jednotkách milisekund, což plně uspokojuje požadavky malého až středního týmu bez nutnosti řešit invalidaci cache.
+* **Consequences:** Nulová režie na správu cache; data jsou vždy 100% čerstvá a autorizovaná.
+* **Migration / replacement impact:** V případě potřeby lze cachovat čistě statická metadata (např. systémové číselníky) bez dopadu na zbytek systému.
+* **Relation to architecture:** Step 12 (Caching a Stale Reads), Step 14 (Zákaz obcházení autorizace přes cache).
+
+---
+
+#### ADR-018: Úložiště souborových příloh
+* **Status:** Deferred
+* **Context:** Posouzení potřeby ukládání velkých binárních souborů, příloh úkolů a fotografií v základní verzi.
+* **Decision:** **Správa binárních souborových příloh je pro verzi 1.0 odložena (Deferred).** Architektura je navržena pro budoucí připojení S3-kompatibilního úložiště (MinIO / S3) přes dedikovaný adaptér.
+* **Alternatives considered:** Ukládání souborů na lokální disk serveru, ukládání binárek do PostgreSQL (BYTEA).
+* **Reasons:** Jádrem systému Nástěnka je přehledná správa úkolů, odpovědnosti a stavů. Ukládání souborů přináší nároky na diskové kvóty, antivirovou kontrolu a zálohování velkých objemů. Odložením souborů na další etapu udržíme startovací fázi štíhlou a soustředěnou na klíčovou hodnotu.
+* **Consequences:** V1 pracuje s textovými popisy a odkazy; model příloh je připraven pro navazující implementaci.
+* **Migration / replacement impact:** Přidání příloh proběhne rozšířením schématu o metadata a implementací infrastrukturního adaptéru úložiště.
+* **Relation to architecture:** Step 14 (External integrations, Adapter pattern), Step 16 (Týmové přílohy v logickém modelu).
+
+---
+
+#### ADR-019: Zpracování úloh na pozadí (Background Processing)
+* **Status:** Accepted
+* **Context:** Aplikace potřebuje provádět periodické úkony: zpracování záznamů z Outbox tabulky, čištění expirovaných session a případné budoucí retry notifikací.
+* **Decision:** Vybíráme **Interní naplánovaný běžec (In-Process Scheduled Runner) s koordinací pomocí databázového zámku (PostgreSQL Advisory Locks)**.
+* **Alternatives considered:** BullMQ (vyžaduje Redis), Celery, samostatný cron démon operačního systému.
+* **Reasons:** Eliminuje nutnost provozovat další infrastrukturu (Redis). Běží jako lehká úloha uvnitř Node.js procesu. Využití PostgreSQL poradních zámků (`pg_try_advisory_xact_lock`) zaručuje, že i při běhu více instancí aplikace bude Outbox v daný okamžik odbavovat právě jeden proces bez kolizí.
+* **Consequences:** Jednoduchý, soběstačný a vysoce spolehlivý mechanismus bez externích závislostí.
+* **Migration / replacement impact:** Při budoucím škálování lze úlohy přesunout do dedikovaného worker kontejneru.
+* **Relation to architecture:** Step 10 (Spolehlivé doručení), Step 14 (Outbox processor).
+
+---
+
+#### ADR-020: Protokolování a pozorovatelnost (Logging & Observability)
+* **Status:** Accepted (pro strukturované logy a health check) / Deferred (pro externí APM)
+* **Context:** Systém musí poskytovat přesnou diagnostiku chyb, sledování latence a provozní sondy bez zbytečného zatěžování a bez úniku citlivých údajů.
+* **Decision:** Vybíráme **Strukturované JSON protokolování pomocí knihovny Pino** doplněné o **HTTP Health Check endpoint (`/api/health`)**. Integrace těžkých externích APM platforem (Datadog, New Relic) je **odložena (Deferred)**.
+* **Alternatives considered:** Winston, console.log, cloudové SaaS loggery.
+* **Reasons:** Pino je nejrychlejší známý logger pro Node.js s minimální zátěží CPU. Generuje přísně strukturovaný JSON výstup s podporou `correlation_id` požadavku. Umožňuje automatické maskování citlivých údajů (hesla, tokeny). Health endpoint umožňuje Dockeru a reverzní proxy okamžitě detekovat stav aplikace a databáze.
+* **Consequences:** Logy jsou standardizovaně posílány na `stdout`/`stderr` a snadno sbírány Dockerem.
+* **Migration / replacement impact:** Standardní JSON stream lze napojit na jakýkoliv budoucí centralizovaný log management (Loki, ELK).
+* **Relation to architecture:** Step 14 (Logging vs. Audit, Observability).
+
+---
+
+#### ADR-021: Testovací stack
+* **Status:** Accepted
+* **Context:** Pro ověření spolehlivosti systému je nezbytný moderní, bleskově rychlý a typově bezpečný testovací framework pokrývající jednotkové testy domény, integrační testy use cases i E2E scénáře v prohlížeči.
+* **Decision:** Vybíráme **Vitest** pro jednotkové a integrační testy a **Playwright** pro End-to-End (E2E) testování.
+* **Alternatives considered:** Jest, Mocha, Cypress.
+* **Reasons:** Vitest nabízí nativní podporu TypeScriptu, ESM modulů a extrémní rychlost díky sdílené architektuře. Umožňuje snadné spouštění stovek doménových testů během zlomku sekundy. Playwright je moderním standardem pro spolehlivé testování webových scénářů na desktopu i mobilním viewportu bez falešných chyb (flakiness).
+* **Consequences:** Vývojáři i Antigravity mohou okamžitě validovat změny spuštěním `npm test`.
+* **Migration / replacement impact:** Testy jsou psány v běžném standardu `describe / it / expect`; migrace by byla přímočará.
+* **Relation to architecture:** Step 14 (Testing Architecture, Unit, Integration, API a E2E vrstvy).
+
+---
+
+#### ADR-022: Balíčkovací manažer (Package Manager)
+* **Status:** Accepted
+* **Context:** Výběr nástroje pro správu závislostí a spouštění skriptů s důrazem na stabilitu, kompatibilitu s Windows a předvídatelnost pro Antigravity.
+* **Decision:** Vybíráme standardní **npm** (součást Node.js).
+* **Alternatives considered:** pnpm, yarn, bun.
+* **Reasons:** npm je integrální součástí oficiální distribuce Node.js. Nevyžaduje žádné dodatečné globální instalace. Má stoprocentní kompatibilitu s operačním systémem Windows i Linux kontejnery. Soubor `package-lock.json` garantuje absolutně deterministické sestavení identických závislostí.
+* **Consequences:** Jednotný standard bez nutnosti řešit symlinky pnpm na specifických souborových systémech.
+* **Migration / replacement impact:** Přechod na pnpm/yarn je v budoucnu možný pouhým přegenerováním lockfile.
+* **Relation to architecture:** Závazná pravidla vývoje projektu.
+
+---
+
+#### ADR-023: Nástroje pro kvalitu kódu a fitness rules
+* **Status:** Accepted
+* **Context:** Je nutné automaticky vynucovat čistotu kódu, typovou bezpečnost a architektonická pravidla integrity (Architecture Fitness Rules ze Step 14).
+* **Decision:** Vybíráme **ESLint 9 (Flat Config) + Prettier + TypeScript Compiler (`tsc --noEmit`)**.
+* **Alternatives considered:** Biome, čistý linter bez formátovače.
+* **Reasons:** ESLint s pravidly pro omezení importů (`no-restricted-imports`) umožňuje přímo v linteru automaticky zablokovat zakázané závislosti (např. zákaz importu databáze do komponent frontendu dle Invariantu 1 ze Step 14). Prettier zajišťuje jednotné formátování kódu a předchází zbytečným diffům v Gitu.
+* **Consequences:** Kontrola kvality je integrována do skriptu `npm run lint` a spouštěna v rámci CI pipeline.
+* **Migration / replacement impact:** Běžný průmyslový standard s nulovým rizikem.
+* **Relation to architecture:** Step 14 (Architecture Fitness Rules).
+
+---
+
+#### ADR-024: Model nasazení (Deployment Model)
+* **Status:** Accepted
+* **Context:** Aplikace musí být snadno self-hostovatelná na vlastním hardwaru (domácí server, firemní NAS, lokální PC, virtuální privátní server) i v cloudu bez nutnosti platit za proprietární platformy.
+* **Decision:** Vybíráme **Self-Hosted Docker Compose** (vícefázový Dockerfile pro Next.js aplikaci + oficiální obraz PostgreSQL 18).
+* **Alternatives considered:** Kubernetes, holý proces přes PM2 na serveru, závislost na Vercelu.
+* **Reasons:** Docker Compose představuje zlatý standard pro spolehlivý self-hosting. Celý systém (webová aplikace, databáze, migrace a síť) je definován v jediném přehledném souboru `docker-compose.yml`. Spuštění je otázkou jediného příkazu `docker compose up -d`. Zajišťuje absolutní reprodukovatelnost prostředí nezávisle na hostitelském operačním systému.
+* **Consequences:** Nulová závislost na externích poskytovatelích hostingu; plná kontrola nad daty a provozem.
+* **Migration / replacement impact:** Kontejnerizovanou aplikaci lze kdykoliv přenést na libovolný jiný server či cloud podporující kontejnery.
+* **Relation to architecture:** Požadavky na self-hosting a nízké provozní náklady.
+
+---
+
+#### ADR-025: Integrační a doručovací pipeline (CI/CD)
+* **Status:** Accepted
+* **Context:** Je nutné zajistit automatizovanou kontrolu kvality kódu při zachování závazného pravidla projektu: **Git push i nasazení provádí výhradně vlastník projektu ručně**.
+* **Decision:** Vybíráme **GitHub Actions pro automatizovanou verifikaci (Lint, Typecheck, Test, Build)**. Nasazení a Git push zůstávají přísně manuální.
+* **Alternatives considered:** Plně automatický continuous deployment (CD) na server po každém pushi, GitLab CI.
+* **Reasons:** Automatická pipeline v GitHub Actions ověří, že každý commit splňuje typové kontroly, prochází testy a úspěšně se sestaví. Zásada manuálního pushi a nasazení chrání projekt před nechtěným přepsáním produkčních dat.
+* **Consequences:** Vývojář má okamžitou jistotu o funkčnosti kódu; produkční prostředí zůstává pod plnou kontrolou vlastníka.
+* **Migration / replacement impact:** Skripty spouštěné v CI (`npm run lint`, `npm test`, `npm run build`) jsou totožné s lokálními příkazy.
+* **Relation to architecture:** Závazná procesní pravidla projektu pro Git.
+
+---
+
+#### ADR-026: Konfigurace a správa tajemství
+* **Status:** Accepted
+* **Context:** Konfigurace aplikace a citlivé přístupové údaje (databázová hesla, session secrets) musí být spravovány bezpečně, typově a odděleně od kódu.
+* **Decision:** Vybíráme **Proměnné prostředí (Environment Variables) validované při startu aplikace pomocí Zod schématu**.
+* **Alternatives considered:** Nekontrolovaný přístup přes `process.env`, externí trezory tajemství (HashiCorp Vault).
+* **Reasons:** Zod schéma pro konfiguraci (vzor `t3-env`) zaručí, že pokud chybí povinná proměnná (např. `DATABASE_URL` nebo `BETTER_AUTH_SECRET`), aplikace okamžitě při startu havaruje s jasným chybovým hlášením (*Fail Fast princip*). Tím se předejde skrytým chybám za běhu. Soubory `.env` jsou striktně ignorovány v Gitu (`.gitignore`).
+* **Consequences:** Přísný zákaz ukládání hesel v repozitáři; existence šablony `.env.example`.
+* **Migration / replacement impact:** Standardní konfigurace přes prostředí podporovaná všemi operačními systémy a kontejnery.
+* **Relation to architecture:** Step 14 (Configuration Layer a správa tajemství).
+
+---
+
+#### ADR-027: Licenční politika a otevřený kód
+* **Status:** Accepted
+* **Context:** Projekt Nástěnka vyžaduje právní jistotu, svobodu úprav, možnost privátního provozu a absenci licenčních rizik.
+* **Decision:** Schvalujeme **Výhradně permisivní open-source licence (MIT, Apache 2.0, BSD, PostgreSQL License)** pro veškeré knihovny a nástroje stacku.
+* **Alternatives considered:** Začlenění knihoven s restriktivními licencemi (GPLv3, AGPL, komerční placené komponenty).
+* **Reasons:** Permisivní licence zaručují, že systém Nástěnka může být svobodně provozován, upravován a self-hostován bez právních omezení či povinnosti zveřejňovat privátní konfiguraci.
+* **Consequences:** Pravidelná kontrola závislostí z hlediska licencí.
+* **Migration / replacement impact:** Žádná závislost nepředstavuje právní riziko.
+* **Relation to architecture:** Hodnoticí kritéria Step 15.
+
+---
+
+### 34.5 Finální schválený technologický stack (Souhrnná tabulka)
+
+Následující tabulka definuje závazný technologický stack aplikace Nástěnka schválený na základě předchozích ADR:
+
+| Vrstva / Oblast | Vybraná technologie | Verze / Standard | Status | Klíčový důvod výběru |
+|---|---|---|---|---|
+| **Aplikace & Full-stack** | **Next.js (App Router)** | `16.x` | Accepted (ADR-001) | Modulární monolit, Server Components, API routes. |
+| **UI Primitiva & Styling** | **Tailwind CSS + Radix UI** | `Shadcn pattern` | Accepted (ADR-002) | Nulový lock-in, přístupnost (a11y), mobilní ergonomie. |
+| **Jazyk** | **TypeScript** | `Strict Mode` | Accepted (ADR-003) | End-to-end typová bezpečnost, zákaz implicitního any. |
+| **Runtime** | **Node.js LTS** | `24 LTS` | Accepted (ADR-004) | Dlouhodobá stabilita, prověřenost pro produkční self-hosting. |
+| **Primární databáze** | **PostgreSQL** | `18.x` | Accepted (ADR-005) | ACID transakce, parciální indexy, OCC, Outbox, Full-text. |
+| **Persistenční ORM** | **Drizzle ORM** | `Nejnovější stabilní` | Accepted (ADR-006) | Typová bezpečnost, transparentní SQL kontrola, nulová režie. |
+| **Autentizace** | **Better Auth** | `Nejnovější stabilní` | Accepted (ADR-007) | 100% self-hosted, oddělení identity od User.id, Drizzle podpora. |
+| **Session Model** | **Server-side DB Session** | `HTTP-Only Cookie` | Accepted (ADR-008) | Okamžitá revokace, ochrana proti XSS, bez nutnosti Redisu. |
+| **Autorizace** | **Custom Policy Engine** | `ActorContext based` | Accepted (ADR-009) | Striktní vynucení rolí na backendu, doménová přesnost. |
+| **API / Transport** | **REST-like HTTP API** | `JSON / OpenAPI` | Accepted (ADR-010) | Srozumitelnost, debugovatelnost, shoda se Step 7 a 12. |
+| **Validace** | **Zod** | `v3.x / stabilní` | Accepted (ADR-011) | Typová odvození, sdílená validace pro DTO, formuláře i .env. |
+| **Migrace databáze** | **Drizzle Kit** | `Verzované SQL` | Accepted (ADR-012) | Kontrola nad SQL v Gitu, zákaz neřízeného pushi na produkci. |
+| **Real-time** | **Periodic Smart Polling** | `SWR pattern` | Accepted (ADR-013) | Jednoduchost v1; WebSocket/SSE odloženo (Deferred). |
+| **Doménové události** | **Transactional Outbox** | `PostgreSQL tabulka` | Accepted (ADR-014) | Spolehlivost v ACID transakci bez externího brokera. |
+| **Notifikace** | **In-app Notification Service**| `PostgreSQL tabulka` | Accepted (ADR-015) | Přímo v aplikaci; E-mail a Push odloženy (Deferred). |
+| **Vyhledávání** | **PostgreSQL Full-Text** | `tsvector + pg_trgm` | Accepted (ADR-016) | Nativní v DB, čeština, dodržení Authorized Query Scope. |
+| **Mezipaměť (Cache)** | **Bez distribuované cache** | `Přímé indexované DB`| Deferred (ADR-017) | Prevence úniku starých práv; PostgreSQL plně postačuje. |
+| **Souborové přílohy** | **Odloženo na další etapu** | `Příprava na S3/Local`| Deferred (ADR-018) | V1 soustředěna na jádro úkolů; přílohy modulárně později. |
+| **Úlohy na pozadí** | **In-Process Runner** | `DB Advisory Locks` | Accepted (ADR-019) | Odbavení Outboxu uvnitř Node procesu bez externích front. |
+| **Protokolování** | **Pino** | `Strukturovaný JSON` | Accepted (ADR-020) | Vysoký výkon, strojový formát, korelační ID; APM odloženo. |
+| **Testování** | **Vitest + Playwright** | `Stabilní` | Accepted (ADR-021) | Bleskové jednotkové/integrační testy + E2E v prohlížeči. |
+| **Správce balíčků** | **npm** | `Oficiální Node.js` | Accepted (ADR-022) | Maximální kompatibilita s Windows i Linuxem, determinismus. |
+| **Kvalita kódu** | **ESLint 9 + Prettier** | `Flat Config` | Accepted (ADR-023) | Automatická kontrola architektonických fitness pravidel. |
+| **Nasazení** | **Docker Compose** | `Multi-stage build` | Accepted (ADR-024) | Reprodukovatelný self-hosting na vlastním serveru/NAS. |
+| **CI/CD** | **GitHub Actions** | `Automatická verifikace`| Accepted (ADR-025) | Kontrola PR; push i deployment provádí vlastník ručně. |
+| **Konfigurace** | **Zod Environment Schema** | `Fail-Fast Startup` | Accepted (ADR-026) | Typová validace .env; přísný zákaz secrets v repozitáři. |
+| **Licence** | **Permisivní Open-Source** | `MIT / Apache 2.0` | Accepted (ADR-027) | 100% právní svoboda pro soukromý i komerční provoz. |
+
+---
+
+### 34.6 Technologie záměrně odmítnuté pro v1 (Explicit Non-Choices)
+
+V zájmu zachování jednoduchosti, spolehlivosti a Anti-Jira principu architektura Step 15 **výslovně a vědomě odmítá** následující technologie pro první verzi systému:
+* **Mikroslužby (Microservices):** Neúměrná režie síťové latence, distribuovaných transakcí a nasazení. Systém je striktně navržen jako **modulární monolit**.
+* **Kubernetes (K8s):** Masivní provozní komplexita; Docker Compose plně dostačuje pro provoz celého systému.
+* **Externí Message Brokery (Apache Kafka, RabbitMQ):** Zbytečná infrastruktura; Transactional Outbox v PostgreSQL poskytuje garantovanou spolehlivost s nulovou režií.
+* **Externí vyhledávací enginy (Elasticsearch, OpenSearch):** Náročné na paměť RAM a správu; PostgreSQL Full-Text plně pokrývá potřeby vyhledávání.
+* **Distribuovaná mezipaměť (Redis):** Přináší riziko nekonzistence a úniku starých bezpečnostních oprávnění; pro první verzi není potřeba.
+* **Event Sourcing jako primární persistence:** Zbytečná složitost pro správu aktuálního stavu úkolů a Nástěnek; stavový model v PostgreSQL je přímočarý a bezpečný.
+* **Proprietární Cloud-Only služby (Firebase, Supabase Cloud, AWS DynamoDB):** Porušily by požadavek na nezávislý self-hosting a vytvořily vendor lock-in.
+
+> [!NOTE]
+> Odmítnutí těchto technologií neznamená, že jsou špatné. Znamená, že pro zadání a měřítko projektu Nástěnka by představovaly čistý overengineering.
+
+---
+
+### 34.7 Známé technologické kompromisy a vědomě přijatá omezení
+
+Architektonické rozhodování je vždy uměním volby správných kompromisů:
+1. **Modulární monolit vs. Mikroslužby:**
+   * *Kompromis:* Všechny moduly běží v jednom procesu.
+   * *Ospravedlnění:* Extrémně snadné nasazení, bleskový lokální vývoj, žádné síťové výpadky mezi službami, transakční integrita na úrovni jedné databáze.
+2. **Drizzle ORM vs. Plná abstrakce (Prisma / TypeORM):**
+   * *Kompromis:* Drizzle vyžaduje porozumění SQL a explicitnější zápis dotazů.
+   * *Ospravedlnění:* Získáváme stoprocentní kontrolu nad generovaným SQL, nulovou skrytou režii a přímou podporu specifických PostgreSQL indexů a transakcí bez obezliček.
+3. **Smart Polling vs. Trvalé WebSockets:**
+   * *Kompromis:* Aktualizace stavu se neprojeví v řádu milisekund, ale v řádu několika sekund.
+   * *Ospravedlnění:* Naprostá stabilita na nestabilních mobilních připojeních v terénu, nulová nutnost spravovat stavové socketové clustery a heartbeat mechanismy.
+4. **Vlastní PostgreSQL vyhledávání vs. Elasticsearch:**
+   * *Kompromis:* Nemáme pokročilé jazykové analýzy velkých korpusů textu.
+   * *Ospravedlnění:* Vyhledávání běží přímo v databázi uvnitř téhož oprávněného scopu bez nutnosti složité synchronizace indexů.
+5. **Přímé dotazy do DB vs. Redis Cache:**
+   * *Kompromis:* Každý autorizovaný požadavek provede rychlý indexovaný dotaz do PostgreSQL.
+   * *Ospravedlnění:* Absolutní záruka, že odebrané členství nebo změněná role se projeví okamžitě bez zpoždění způsobeného mezipamětí.
+
+---
+
+### 34.8 Architektura nasazení a provozní diagram (Deployment Architecture)
+
+Topologie nasazení systému pro self-hosted prostředí:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 Uživatelé (Desktop & Mobil)                 │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ HTTPS (Port 443) / Lokální LAN (Port 80/443)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│             Reverzní Proxy (např. Caddy / Nginx)            │
+│         - Zakončení TLS/SSL certifikátů                     │
+│         - Komprese (Gzip / Brotli)                          │
+│         - Přeposílání na aplikační kontejner                │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ HTTP (Interní Docker síť)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│           Docker Kontejner: Aplikace Nástěnka               │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │ Next.js 16 (Node.js 24 LTS Runtime)                 │   │
+│   │ ├── Webové rozhraní (Server & Client Components)    │   │
+│   │ ├── REST-like API Route Handlers                    │   │
+│   │ ├── Better Auth Engine & Session Validator          │   │
+│   │ ├── Application Services & Policy Engine            │   │
+│   │ └── Domain Layer Core                               │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+│                              │                              │
+│   ┌──────────────────────────┴──────────────────────────┐   │
+│   │ Interní asynchronní procesor (Scheduled Worker)     │   │
+│   │ ├── Odbavovač Outbox tabulky                        │   │
+│   │ ├── Notification Generator                          │   │
+│   │ └── Čistič expirovaných session                     │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+└──────────────────────────────┼──────────────────────────────┘
+                               │ TCP / PostgreSQL Protocol (Port 5432)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│           Docker Kontejner: Databáze PostgreSQL 18          │
+│                                                             │
+│   ├── Provozní tabulky (User, Board, Membership, Task...)   │
+│   ├── Tabulka relací (Sessions)                             │
+│   ├── Tabulka událostí (OutboxEvents)                       │
+│   ├── Tabulka upozornění (Notifications)                    │
+│   ├── Tabulka historie (AuditLog - append-only)             │
+│   └── Persistentní Docker Volume (Data na disku hostitele)  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 34.9 Rozdíly mezi vývojovým (Development) a produkčním (Production) prostředím
+
+Architektura striktně vymezuje chování v jednotlivých prostředích:
+
+| Aspekt | Vývojové prostředí (Development) | Produkční prostředí (Production) |
+|---|---|---|
+| **Databáze** | Lokální PostgreSQL v Dockeru / testovací DB. | Izolovaná produkční PostgreSQL s persistentním volume. |
+| **Přihlašovací údaje** | Výchozí lokální z `.env.local` (např. `postgres:postgres`). | Bezpečná náhodná hesla generovaná správcem serveru. |
+| **HTTPS / SSL** | Povoleno HTTP na `localhost:3000`. | Striktní HTTPS s automatickými Let's Encrypt certifikáty. |
+| **Protokolování** | Čitelný výstup přes `pino-pretty`, log level `debug`. | Čistý jednorázový JSON stream na `stdout`, log level `info`. |
+| **Chybové stavy** | Detailní chybové hlášky pro usnadnění ladění. | Pouze standardizované chybové kódy bez technických stack trace. |
+| **Zálohování** | Na vyžádání vývojáře. | Pravidelný automatizovaný export (`pg_dump`) na oddělené úložiště. |
+| **Migrace DB** | Vývojář generuje nové SQL skripty přes Drizzle Kit. | Automatická exekuce verzovaných migrací při startu kontejneru. |
+
+---
+
+### 34.10 Strategie verzování a aktualizací (Version Policy)
+
+Pro zajištění dlouhodobé udržitelnosti stanovuje systém následující pravidla verzování:
+* **Architektonická rozhodnutí (Major/Minor):** Změna hlavní verze frameworku (např. Next.js 16 ──► 17), přechod na novou LTS řadu Node.js (24 ──► 26) či povýšení PostgreSQL (18 ──► 19) představuje **architektonickou změnu** vyžadující aktualizaci ADR a ověření kompatibility.
+* **Běžná údržba (Patch):** Bezpečnostní záplaty a opravné patch verze knihoven (např. `16.0.1 ──► 16.0.2`) jsou považovány za běžnou provozní údržbu.
+* **Deterministický lockfile:** Soubor `package-lock.json` je závaznou součástí repozitáře. Každá instalace na produkci probíhá striktně přes příkaz `npm ci`, který garantuje instalaci přesně schválených verzí balíčků.
+
+---
+
+### 34.11 Technologické invarianty Step 15
+
+Výběr technologického stacku a ADR garantuje dodržení následujících dvaceti závazných invariantů:
+
+1. **Frontend nesmí obcházet API a aplikační vrstvu:** Veškerá komunikace probíhá výhradně přes definované REST-like endpointy.
+2. **Backend zůstává jedinou bezpečnostní autoritou:** Přizpůsobení UI je pouze ergonomie; backend nezávisle ověřuje každý požadavek.
+3. **Interní `User.id` je striktně oddělen od identity v Better Auth:** Změna autentizačního mechanismu neovlivní doménové vazby.
+4. **Autorizace zůstává v aplikační vrstvě:** Oprávnění nejsou delegována na databázi ani frontend; vyhodnocují se v centralizovaném Policy Engine.
+5. **Doménová vrstva nezávisí na Next.js ani Reactu:** Byznys pravidla jsou zapsána v čistém TypeScriptu bez závislosti na frameworku.
+6. **Doménová vrstva nezávisí na Drizzle ORM:** Entity a agregáty nejsou vázány na relační tabulky.
+7. **Primární databází je relační PostgreSQL s plnou podporou ACID:** Zákaz ukládání primárního stavu do nerelačních či nestabilních úložišť.
+8. **Databázové constrainty tvoří nepřekročitelnou poslední linii obrany:** `UNIQUE(user_id, board_id)` a cizí klíče zůstávají aktivní.
+9. **Databázové migrace jsou výhradně verzované:** Veškeré změny schématu jsou uloženy v auditovatelných SQL souborech v Gitu.
+10. **Schema databáze se na produkci nikdy nemění neřízeným push mechanismem:** Příkaz `db push` je na produkci přísně zakázán.
+11. **Doménová událost vzniká výhradně z úspěšně potvrzené změny:** Neúspěšná transakce nevytvoří událost v Outboxu.
+12. **Notifikační služba nemění původní doménový stav:** Zpracování notifikací je pasivním vedlejším efektem.
+13. **AuditLog je nezávislý na životním cyklu cílové entity:** Fyzické smazání úkolu nesmí odstranit odpovídající záznam v auditu.
+14. **Optimistické řízení souběhu (OCC) nelze obejít:** Každá aktualizace sdíleného objektu ověřuje číslo verze (`version`).
+15. **Vyhledávání nikdy nepřekračuje Authorized Query Scope:** Uživatel nemůže vyhledat data mimo své oprávněné členství.
+16. **Osobní pracovní prostor zůstává striktně izolován:** Soukromá data uživatele se nemíchají s týmovými dotazy Nástěnky.
+17. **Technologie se statusem Deferred nesmí být implementovány bez předchozího schválení:** Zákaz předčasného zavádění neodsouhlasených komponent.
+18. **Externí služby jsou zapouzdřeny za rozhraním adaptéru:** Změna poskytovatele se dotkne výhradně jedné infrastrukturní třídy.
+19. **Projekt je 100% self-hostovatelný:** Systém nevyžaduje žádnou cloudovou platformu pro plnohodnotný běh.
+20. **Architektura zůstává modulárním monolitem:** Projekt není uměle dělen na mikroslužby bez prokázaného objektivního důvodu.
+
+---
+
+### 34.12 Vliv technologických voleb na Step 5 až Step 14 a technologická nezávislost domény
+
+Provedený technologický výběr byl detailně zkontrolován vůči všem předchozím architektonickým krokům:
+* **Step 5 (Oprávnění):** Better Auth + Custom Policy Engine plně podporují model rolí `ADMIN`, `OWNER`, `MANAGER`, `MEMBER`.
+* **Step 6 a 8 (Datový model a Schéma):** Drizzle ORM a PostgreSQL 18 bezchybně realizují všechny tabulky, unikátní parciální indexy i kaskádová pravidla.
+* **Step 7 (API operace):** Next.js Route Handlers s REST-like JSON rozhraním přesně zrcadlí schválené logické endpointy.
+* **Step 9 (Autentizace a Session):** Better Auth implementuje server-side session v PostgreSQL s HTTP-only cookies a oddělením identity Actora.
+* **Step 10 (Události a Notifikace):** PostgreSQL Outbox tabulka a interní worker garantují spolehlivou publikaci událostí.
+* **Step 11 (Souběh a OCC):** Drizzle ORM plně podporuje verifikační WHERE podmínky pro kontrolu `version` a detekci `409 Conflict`.
+* **Step 12 (Query a Vyhledávání):** PostgreSQL Full-Text Search (`tsvector` + `pg_trgm`) a Drizzle dotazy zajišťují stránkovaný a bezpečný Authorized Query Scope.
+* **Step 13 (UI/UX architektura):** Next.js + Tailwind CSS + Radix UI poskytují ideální základ pro responzivní, mobilně ergonomické a přístupné české rozhraní.
+* **Step 14 (Technická architektura a vrstvy):** Vybraný stack dokonale zapadá do vrstvené architektury a respektuje všechna pravidla závislostí:
+
+```text
+Technologie (Next.js, Drizzle, Better Auth, PostgreSQL)
+               ↓ implementuje
+Infrastruktura (Repozitáře, Adaptéry, Konfigurace)
+               ↓ obsluhuje
+Aplikační vrstva (Use Cases, Transakce, Policy Engine)
+               ↓ řídí
+Doménová vrstva (Čisté byznys entity, invarianty, pravidla)
+```
+
+Doménový model systému Nástěnka zůstává čistý, technologicky nezávislý a plně chráněný.
+
+---
+
+## 35. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -5932,3 +6538,4 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 | **1.0.0** | 19. 9. 2026 | Step 12 – Vyhledávání, filtrování, řazení, stránkování, autorizovaný query scope, stabilní pořadí, výkonové hranice a bezpečné čtení dat. | Antigravity / Product Owner |
 | **1.1.0** | 19. 9. 2026 | Step 13 – UI/UX architektura, informační architektura, navigace, struktura obrazovek, desktop/mobile chování, role-aware UI, loading/error/empty states, conflict UX a ochrana osobních dat. | Antigravity / Product Owner |
 | **1.2.0** | 19. 9. 2026 | Step 14 – Technická architektura aplikace, vrstvy, závislosti, Application/Domain/Infrastructure hranice, Authentication/Authorization, Repository, transakce, Event/Outbox, Notification, Audit, testovatelnost a technické invarianty. | Antigravity / Product Owner |
+| **1.3.0** | 19. 9. 2026 | Step 15 – Výběr technologického stacku a ADR: frontend, UI strategie, TypeScript, runtime, PostgreSQL, persistence, autentizace, session, authorization, API, validation, migrations, events, notifications, search, deployment, testing, observability a další technická rozhodnutí. | Antigravity / Product Owner |
