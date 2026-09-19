@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 0.6.0<br>
+**Verze:** 0.7.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -2147,7 +2147,664 @@ V současné verzi architektury nejsou evidovány žádné další otevřené ot
 
 ---
 
-## 22. Historie verzí
+## 23. Step 9 – Autentizace, identity, session a životní cyklus přihlášení
+
+Tato kapitola definuje logickou autentizační architekturu systému Nástěnka, způsob správy uživatelských identit, životní cyklus přihlašovacích relací (session) a jejich striktní oddělení od autorizační vrstvy zavedené v předchozích krocích.
+
+Architektura je formulována technologicky neutrálně: definuje požadované vlastnosti, bezpečnostní hranice a doménové invarianty bez předčasné volby konkrétního autentizačního software či knihovny.
+
+---
+
+### 23.1 Autentizace vs. autorizace
+
+Systém striktně odděluje dvě základní bezpečnostní fáze:
+
+* **Autentizace (Kdo jsi?):**
+  * Proces ověření deklarované identity uživatele na základě předložených přihlašovacích údajů či kryptografických artefaktů.
+  * Výsledkem úspěšné autentizace je ověřená interní identita uživatele (`User.id`) a navázaný serverový kontext platné relace (`Session`).
+* **Autorizace (Smíš tuto operaci provést?):**
+  * Proces vyhodnocení, zda autentizovaný uživatel vystupující v roli volajícího (**Actor**) smí provést konkrétní doménovou operaci nad cílovým objektem (**Target**) v daném kontextu (konkrétní Nástěnka, oblast, úkol).
+  * Autorizační logika (detailně specifikovaná v kapitole 10 – Step 7) vyhodnocuje kombinaci:
+    * `actor_user_id` (identita Actora),
+    * `User.global_role` (globální role `USER` nebo `ADMIN`),
+    * `Membership.role` (kontextová role na dané Nástěnce: `OWNER`, `MANAGER`, `MEMBER`),
+    * stav cílové entity (např. zda úkol není archivován, zda Nástěnka není soft-deleted).
+
+#### Závazný bezpečnostní princip
+> [!IMPORTANT]
+> **Úspěšná autentizace automaticky neznamená oprávnění k libovolné operaci.**
+> Autentizace pouze spolehlivě prokazuje identitu volajícího; každá jednotlivá operace musí projít nezávislým autorizačním vyhodnocením na backendu podle schválené autorizační matice.
+
+---
+
+### 23.2 Uživatelská identita (User Identity)
+
+V návaznosti na datový model (kapitola 9 – Krok 6) a databázové schéma (kapitola 11 – Step 8) slouží:
+
+```text
+User.id
+```
+
+jako **jediný kanonický interní identifikátor uživatele** v celém systému.
+
+#### Vlastnosti interní identity
+1. **Stabilita a neměnnost:** `User.id` je generován při vzniku uživatelského účtu a po celou dobu existence záznamu se nikdy nemění.
+2. **Nezávislost na vnějších atributech:** Změna e-mailové adresy, změna zobrazovaného jména ani reset hesla nemají žádný vliv na hodnotu `User.id`.
+3. **Relační integrita:** `User.id` vystupuje jako cizí klíč ve všech vazbách systému:
+   * `Membership.user_id` (členství na Nástěnce),
+   * `Board.created_by` (zakladatel Nástěnky),
+   * `Task.created_by` (autor úkolu),
+   * `Task.assignee_id` (Hlavní Řešitel úkolu),
+   * `TaskParticipant.user_id` (Spoluřešitel úkolu),
+   * `AuditLog.actor_id` (identifikace původce bezpečnostní či doménové události).
+4. **Vystupování v bezpečnostním kontextu:** `User.id` je jedinou hodnotou, která se dosazuje do systémového kontextu `actor_user_id` při autorizaci požadavků.
+
+#### Striktní zákaz záměny identit
+Interní `User.id` nesmí být v doménové logice ani v databázových vazbách zaměňován s:
+* **E-mailem (`User.email`):** E-mail slouží jako přihlašovací jméno a komunikační kanál, nikoliv jako stabilní primární klíč.
+* **Zobrazovaným jménem (`User.name`):** Uživatelské jméno je pouze prezentační údaj pro UI.
+* **Identifikátorem session (`session_id`):** Session je dočasná relace, nikoliv trvalá identita.
+* **Externím Provider ID:** Pokud bude v budoucnu integrován externí zprostředkovatel identity (např. Google/Microsoft OAuth či OIDC), externí identifikátor (např. `sub` / `provider_user_id`) se mapuje jako samostatný atribut na interní `User.id`, nikdy interní ID nenahrazuje.
+
+---
+
+### 23.3 Vznik uživatelského účtu a životní cyklus identity
+
+Životní cyklus identity od jejího vzniku až po autorizované použití probíhá v následujících logických fázích:
+
+```text
+┌────────────────────────────────────────┐
+│      Registrace / vytvoření účtu       │
+└───────────────────┬────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────┐
+│  Ověření identity / aktivační proces   │
+└───────────────────┬────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────┐
+│     Aktivní uživatel (User.id)         │  ◄── User.is_active = true
+└───────────────────┬────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────┐
+│       Přihlášení uživatele (Login)     │
+└───────────────────┬────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────┐
+│    Aktivní přihlašovací relace         │  ◄── Session.state = ACTIVE
+└───────────────────┬────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────┐
+│     Autorizované doménové operace      │  ◄── vyhodnocení actor_user_id
+└────────────────────────────────────────┘
+```
+
+#### Pravidla pro vznik účtu
+* Konkrétní mechanismus registrace (self-service registrace, e-mailové potvrzení, pozvánka administrátorem nebo pozvánka Ownerem Nástěnky) je otevřenou implementační otázkou.
+* Vytvoření uživatelského účtu musí vždy vést ke vzniku jednoznačné a nezaměnitelné identity `User` s novým unikátním `id`.
+* Zadaný e-mail musí respektovat schválené pravidlo unikátnosti (case-insensitive normalizace, zákaz duplicit dle Step 8).
+* **Běžný nově registrovaný účet získává výhradně roli `User.global_role = 'USER'`.**
+* Globální role `ADMIN` nesmí nikdy vzniknout pouhou registrací běžného uživatele. Získání role `ADMIN` vyžaduje explicitní administrativní povýšení nebo bezpečný systémový provisioning při instalaci aplikace.
+
+---
+
+### 23.4 Globální role ADMIN
+
+Architektura systému důsledně odděluje globální systémovou roli od lokálního členství na Nástěnkách:
+
+```text
+User.global_role ∈ {'USER', 'ADMIN'}
+```
+
+#### Pravidla a chování globální role
+1. **Globální systémová působnost:** Role `ADMIN` je uložena přímo na entitě `User`. Reprezentuje provozního správce celého systému.
+2. **Rovnost v autentizaci:** Uživatel s rolí `ADMIN` podléhá naprosto stejným autentizačním pravidlům jako jakýkoliv jiný uživatel. Musí předložit platné přihlašovací údaje, projít ověřením a získat platnou session.
+3. **Nezávislost na členství v Nástěnkách:** `ADMIN` nemusí mít záznam v tabulce `Membership` konkrétní Nástěnky, aby mohl provádět dohled a krizové zásahy (jak je definováno v kapitolách 8 a 10).
+4. **Striktní oddělení od rolí na Nástěnce:**
+   * Role `OWNER`, `MANAGER` a `MEMBER` jsou definovány výhradně v kontextu vazby `Membership` k dané Nástěnce.
+   * Tyto role NIKDY neslouží jako globální ani autentizační role a nesmí být ukládány do profilu uživatele.
+5. **Nepodvrhnutelnost role:** Klient nesmí mít možnost deklarovat roli `ADMIN` v žádném parametru požadavku. Informaci o roli `ADMIN` načítá backend výhradně z autoritativního datového záznamu uživatele přiřazeného k ověřené session.
+
+---
+
+### 23.5 Login a proces autentizace
+
+Logický proces přihlášení uživatele probíhá v následujících povinných krocích:
+
+1. **Předložení údajů:** Klient odešle přihlašovací údaje (např. e-mail a heslo nebo autentizační artefakt) na autentizační endpoint serveru.
+2. **Ověření údajů:** Autentizační vrstva serveru ověří platnost předložených přihlašovacích údajů proti uloženým bezpečnostním datům (např. ověření kryptografického hashe hesla).
+3. **Vyhledání identity:** Backend na základě úspěšného ověření identifikuje konkrétní entitu `User` a její primární klíč `User.id`.
+4. **Kontrola stavu účtu:** Backend ověří, že uživatelský účet je aktivní:
+   * Pokud je `User.is_active = false` nebo `User.deleted_at IS NOT NULL`, proces přihlášení je okamžitě ukončen a server vrátí chybu (účet je deaktivován).
+5. **Vytvoření relace (Session):** Backend vytvoří novou instanci `Session`, prováže ji s `User.id`, nastaví časová razítka (`created_at`, `expires_at`, `last_activity_at`) a zaznamená její stav jako `ACTIVE`.
+6. **Předání credential:** Bezpečný identifikátor či token relace je předán klientovi (např. prostřednictvím zabezpečené HTTP cookie).
+7. **Vyhodnocení Actora pro další požadavky:** Veškeré následné příchozí chráněné požadavky klienta jsou autorizovány jako operace daného `actor_user_id`.
+
+#### Závazný bezpečnostní princip: Zákaz důvěry v klientský actor_user_id
+> [!CAUTION]
+> **Backend nesmí za žádných okolností převzít `actor_user_id` z nedůvěryhodných dat klienta.**
+> Požadavek klienta nesmí obsahovat parametr typu `actor_user_id = 25`, který by server slepě použil jako identitu volajícího.
+> Identita `actor_user_id` musí být vždy bez výjimky odvozena serverem z ověřené, aktivní a platné relace (`Session`).
+
+---
+
+### 23.6 Logický koncept Session
+
+Systém Nástěnka definuje logický koncept přihlašovací relace (**Session**) nezávisle na konkrétní implementační technologii.
+
+#### Klíčové vlastnosti Session
+* **Jednoznačná identifikace:** Relace je identifikována kryptograficky silným, nepředvídatelným identifikátorem (`session_id`).
+* **Vazba na entitu User:** Každá session náleží právě jednomu uživateli (`User.id`).
+* **Časové omezení:** Session má striktně stanovenou dobu platnosti (absolutní expirace i neaktivní timeout).
+* **Okamžitá odvolatelnost (Revokovatelnost):** Server má kdykoliv možnost relaci explicitně zneplatnit.
+* **Serverová validace:** Server při každém chráněném požadavku ověřuje platnost relace proti autoritativnímu stavu.
+
+#### Konceptuální model Session
+Pro účely logické architektury je Session popsána následující sadou atributů:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                        SESSION                         │
+├────────────────────────────────────────────────────────┤
+│ session_id        : String / UUID (kryptograficky silný│
+│ user_id           : FK -> User.id                      │
+│ created_at        : Timestamp                          │
+│ expires_at        : Timestamp                          │
+│ last_activity_at  : Timestamp                          │
+│ revoked_at        : Timestamp (nullable)               │
+└────────────────────────────────────────────────────────┘
+```
+
+#### Technologická neutralita úložiště session
+Fyzické uložení a správa session dat může v budoucí implementaci využívat:
+* databázovou tabulku v relační databázi,
+* rychlé server-side in-memory úložiště (např. Redis či obdobný session store),
+* hybridní model s kryptograficky podepsanými tokeny ověřovanými proti revokačnímu seznamu.
+
+Architektura záměrně nenařizuje bezstavové JWT tokeny jako jediný model. Pokud by byl zvolen tokenový mechanismus, musí splňovat požadavek na spolehlivou a okamžitou serverovou odvolatelnost relace.
+
+---
+
+### 23.7 Ochrana session a transportní bezpečnost
+
+Ochrana přihlašovací relace před kompromitací vyžaduje dodržení následujících bezpečnostních standardů:
+
+1. **Kryptografická nepředvídatelnost:** Identifikátory session musí být generovány kryptograficky bezpečným generátorem pseudonáhodných čísel (CSPRNG) s minimální entropií 128 bitů, aby se vyloučilo jejich odhadnutí útočníkem.
+2. **Ochrana proti skriptům třetích stran (XSS):** Autentizační credential relace nesmí být snadno dostupný klientským skriptům v DOMu stránky.
+3. **Transportní šifrování (TLS):** Veškerá komunikace mezi klientem a serverem přenášející autentizační údaje či session identifikátory musí probíhat výhradně přes zabezpečený protokol HTTPS/TLS.
+4. **Časová expirace:** Relace musí mít stanoven pevný časový limit platnosti (`expires_at`) i limit pro nečinnost uživatele (sliding expiration na základě `last_activity_at`).
+5. **Možnost explicitního zneplatnění:** Uživatel i administrátor musí mít možnost relaci okamžitě ukončit.
+6. **Ověření při každém požadavku:** Backend musí při každém příchozím volání chráněného API endpointu ověřit, že relace existuje, je ve stavu `ACTIVE`, nevypršela a nebyla odvolána.
+
+#### Požadavky pro cookie-based implementaci
+Pokud bude v implementaci zvolen mechanismus HTTP cookies, musí být relace chráněna konfiguračními atributy:
+* `HttpOnly`: Zabraňuje přístupu klientského JavaScriptu k cookie (ochrana proti zcizení relace přes XSS).
+* `Secure`: Zajišťuje, že prohlížeč odešle cookie výhradně přes šifrované spojení HTTPS.
+* `SameSite=Lax` nebo `SameSite=Strict`: Poskytuje základní ochranu proti útokům typu Cross-Site Request Forgery (CSRF).
+
+---
+
+### 23.8 Životní cyklus session
+
+Přihlašovací relace prochází během své existence deterministickým stavovým cyklem:
+
+```text
+       ┌───────────────┐
+       │    CREATED    │ ◄── Vznik při úspěšném login
+       └───────┬───────┘
+               │
+               ▼
+       ┌───────────────┐        Uplynutí doby platnosti
+       │    ACTIVE     │ ──────────────────────────────────► ┌───────────────┐
+       └───────┬───────┘                                     │    EXPIRED    │
+               │                                             └───────────────┘
+               │ Explicitní zneplatnění (logout / incident /
+               │ deaktivace / změna hesla / zásah Admina)
+               ▼
+       ┌───────────────┐
+       │    REVOKED    │
+       └───────────────┘
+```
+
+#### Význam stavů
+* **CREATED:** Relace byla právě vytvořena a inicializována v rámci úspěšného přihlášení.
+* **ACTIVE:** Relace je platná, časově aktuální a opravňuje provádět operace jménem příslušného uživatele.
+* **EXPIRED:** Relace překročila maximální povolenou dobu platnosti nebo limit neaktivity. Požadavky s touto relací jsou serverem okamžitě odmítnuty.
+* **REVOKED:** Relace byla explicitně předčasně ukončena a zneplatněna. Záznam nese časové razítko `revoked_at`.
+
+#### Události vedoucí k revokaci session
+Session musí být okamžitě přepnuta do stavu `REVOKED` při:
+* uživatelském odhlášení (`POST /auth/logout`),
+* zjištěném bezpečnostním incidentu nebo podezření na zcizení relace,
+* změně hesla uživatele (revokace všech ostatních aktivních relací),
+* úspěšném dokončení obnovy hesla (password recovery),
+* deaktivaci uživatelského účtu (`User.is_active = false`),
+* administrativním bezpečnostním zásahu administrátora (`ADMIN`).
+
+---
+
+### 23.9 Logout (Odhlášení)
+
+Odhlášení je explicitní operace ukončení přihlašovací relace:
+
+```text
+POST /auth/logout
+```
+
+#### Pravidla provádění logoutu
+1. **Zneplatnění relace:** Server přepne aktuální session do stavu `REVOKED` (nastaví `revoked_at = Timestamp`).
+2. **Konec autorizace:** Jakékoliv další požadavky předkládající tuto session jsou vyhodnoceny jako neautentizované (`401 Unauthorized`).
+3. **Vyčištění klienta:** Server instruuje klientský prohlížeč k vymazání session credential (např. vypršením autentizační cookie).
+4. **Integrita doménových dat:** Logout **nikdy nemění entitu User**, nemění členství v Nástěnce (`Membership`), nemění stav Nástěnky (`Board`) ani řešitelské vazby na úkolech (`Task`).
+
+#### Striktní oddělení logoutu od deaktivace účtu
+> [!NOTE]
+> Architektura důsledně rozlišuje **ukončení session (Logout)** od **deaktivace účtu (Deactivation)**:
+> * Logout ukončuje pouze jednu konkrétní dočasnou relaci. Účet uživatele zůstává plně aktivní a uživatel se může kdykoliv znovu přihlásit.
+> * Deaktivace účtu je trvalý administrativní zásah do entity `User`, který znemožňuje jakékoliv budoucí přihlášení a zneplatňuje veškeré existující relace.
+
+---
+
+### 23.10 Deaktivovaný uživatel (is_active = false)
+
+V návaznosti na pravidla z kapitol 9, 11 a 19 platí pro deaktivovaného uživatele (`User.is_active = false`, případně `User.deleted_at IS NOT NULL`):
+
+1. **Zákaz přihlášení:** Deaktivovaný uživatel se nesmí úspěšně přihlásit. Pokus o login okamžitě končí chybou.
+2. **Okamžitá revokace relací:** Veškeré existující aktivní sessions deaktivovaného uživatele musí být v okamžiku deaktivace okamžitě přepnuty do stavu `REVOKED`.
+3. **Zákaz nových operací:** Nově příchozí chráněné požadavky nesmí být autorizovány. Server vrátí chybu `401 Unauthorized`.
+4. **Zachování historických dat a integrity:**
+   * Fyzická data v databázi se nemažou.
+   * Veškeré vytvořené úkoly (`Task.created_by`), komentáře, přílohy i auditní záznamy zůstávají v plném rozsahu zachovány.
+   * Záznamy v `Membership` a auditní vazby nesmí být nekontrolovaně smazány.
+5. **Ochranné pravidlo pro roli OWNER:**
+   * Uživatele, který je aktuálním `OWNEREM` libovolné aktivní Nástěnky, **nelze deaktivovat bez předchozího převodu vlastnictví Nástěnky** na jiného člena nebo direktivního zásahu globálního administrátora (ochrana Invariantu 1 a Invariantu 6 z kapitoly 10).
+
+---
+
+### 23.11 Rozlišení stavů: is_active vs. deleted_at vs. Session State
+
+Architektura striktně definuje tři nezávislé a vzájemně nezaměnitelné pojmy:
+
+| Stavový atribut | Účel a sémantika | Hodnoty / Význam |
+|---|---|---|
+| `User.is_active` | Určuje, zda účet smí normálně používat systém, přihlašovat se a vykonávat akce. | `true`: aktivní účet<br>`false`: deaktivovaný účet (blokován) |
+| `User.deleted_at` | Časové razítko logického vyřazení účtu (soft-delete). Slouží k archivaci a referenční integritě. | `NULL`: běžný účet<br>`Timestamp`: datum logického smazání |
+| `Session State` | Určuje, zda konkrétní dočasná přihlašovací relace má stále platné oprávnění zastupovat uživatele. | `CREATED`, `ACTIVE`, `EXPIRED`, `REVOKED` |
+
+Platná a použitelná přihlašovací relace může existovat **výhradně tehdy, jsou-li současně splněny všechny tři podmínky**:
+1. `User.is_active = true`,
+2. `User.deleted_at IS NULL`,
+3. `Session.state = ACTIVE` (současně platí `now() < expires_at` a `revoked_at IS NULL`).
+
+---
+
+### 23.12 Serverový kontext volajícího (Actor Context)
+
+Po úspěšné autentizaci server vytvoří pro zpracování každého požadavku bezpečný serverový kontext:
+
+```text
+ActorContext {
+    actor_user_id : User.id,
+    global_role   : User.global_role ('USER' | 'ADMIN'),
+    session_id    : Session.session_id,
+    is_active     : Boolean
+}
+```
+
+#### Tok vyhodnocení identity a autorizace
+```text
+HTTP Požadavek s credential
+            │
+            ▼
+    Ověření Session
+            │
+            ▼
+    Ověření entity User (is_active, deleted_at)
+            │
+            ▼
+    Vytvoření ActorContextu na serveru
+            │
+            ▼
+    Autorizační vrstva (Step 7)
+    (vyhodnocení Membership.role a cílové entity)
+            │
+            ▼
+    Provedení doménové operace (Step 7 / Step 8)
+```
+
+Klient nesmí mít možnost identitu v `ActorContext` nijak pozměnit, přepsat ani obejít.
+
+---
+
+### 23.13 Session a dynamické vyhodnocování rolí
+
+Zásadní architektonický princip systému Nástěnka zní:
+
+> [!IMPORTANT]
+> **Session slouží výhradně k identifikaci přihlášeného uživatele, nikoliv jako statické autorizační úložiště jeho práv a rolí.**
+
+#### Důvody pro dynamické vyhodnocování
+V průběhu aktivní session může v systému dojít k významným organizačním změnám:
+* uživateli byla změněna role na Nástěnce (`Membership.role: MEMBER → MANAGER`),
+* na uživatele bylo převedeno vlastnictví Nástěnky (`OWNER`),
+* uživatel byl z Nástěnky odebrán (`DELETE /boards/{id}/members/{userId}`),
+* uživateli byla přidělena nebo odebrána globální role `ADMIN`,
+* uživatelský účet byl zablokován či deaktivován.
+
+Backend při každém autorizačním rozhodování (Step 7) **načítá aktuální stav oprávnění a členství z databáze**, nikoliv ze zastaralých informací zachycených v okamžiku přihlášení. Tím je garantováno, že změna práv člena se projeví okamžitě při dalším API požadavku bez nutnosti čekat na vypršení platnosti session nebo nucené znovupřihlášení.
+
+---
+
+### 23.14 Změna hesla a autentizačních údajů
+
+Při změně autentizačních údajů (např. změna hesla či e-mailu) platí následující logická pravidla:
+
+1. **Neměnnost identity:** Změna hesla ani e-mailu nesmí nikdy změnit `User.id` ani vytvořit nový uživatelský účet.
+2. **Bezpečnostní revokace ostatních relací:** Pokud uživatel změní své heslo, backend zneplatní (`REVOKED`) všechny ostatní aktivní sessions tohoto uživatele s výjimkou aktuální relace, v níž změna proběhla.
+3. **Ochrana před převzetím identity:** Změna autentizačních údajů vyžaduje potvrzení stávajícím heslem (u přihlášeného uživatele) nebo jednorázovým autorizovaným tokenem (při obnově přístupu).
+4. **Zákaz ukládání hesel v otevřeném textu:** Uživatelská hesla se v systému **nikdy neukládají v otevřeném (plaintext) tvaru**. Musí být bezpečně hashována moderním jednosměrným algoritmem s unikátní kryptografickou solí.
+
+---
+
+### 23.15 Obnova přístupu (Password reset / recovery)
+
+Proces bezpečné obnovy přístupu při zapomenutém heslu probíhá v následujících logických fázích:
+
+```text
+1. Požadavek na obnovu (POST /auth/recovery/request s emailem)
+                    │
+                    ▼
+2. Generování jednorázového Recovery Tokenu (časově omezený)
+                    │
+                    ▼
+3. Bezpečné doručení tokenu / odkazu uživateli (např. e-mailem)
+                    │
+                    ▼
+4. Zadání nového hesla s tokenem (POST /auth/recovery/complete)
+                    │
+                    ▼
+5. Ověření platnosti a jednorázovosti tokenu serverem
+                    │
+                    ▼
+6. Nastavení nového hesla, zneplatnění tokenu a revokace sessions
+```
+
+#### Bezpečnostní pravidla procesu obnovy
+* **Jednorázovost a krátká expirace:** Recovery token je striktně jednorázový a má krátkou dobu platnosti (např. 15–30 minut). Po úspěšném použití je token okamžitě zneplatněn.
+* **Ochrana integrity:** Token je svázán s konkrétním `User.id`; nelze jej zneužít k manipulaci s cizím účtem.
+* **Ochrana tajemství:** Hodnota recovery tokenu se nesmí ukládat v otevřeném textu a nesmí být zapisována do žádného auditního ani aplikačního logu.
+* **Revokace relací:** Po úspěšném nastavení nového hesla přes recovery proces jsou okamžitě zneplatněny veškeré dosavadní aktivní sessions uživatele.
+
+---
+
+### 23.16 Ochrana proti enumeration útokům
+
+Endpointy autentizačního subsystému musí být navrženy tak, aby minimalizovaly možnost zjišťování existence uživatelských účtů (account enumeration):
+
+1. **Neutrální odpověď na požadavek obnovy hesla:** Endpoint `POST /auth/recovery/request` vrací vždy identickou neutrální úspěšnou odpověď (např. *„Pokud zadaný e-mail existuje, byly na něj odeslány instrukce pro obnovu hesla.“*), bez ohledu na to, zda e-mail v databázi existuje či nikoliv.
+2. **Jednotné chybové hlášení při neúspěšném přihlášení:** Chybová odpověď endpointu `POST /auth/login` nesmí rozlišovat mezi neexistujícím uživatelem a chybným heslem (vrací obecné sdělení typu *„Neplatné přihlašovací údaje“*).
+
+---
+
+### 23.17 Bezpečnostní hranice a autorita serveru
+
+Architektura striktně vymezuje, co klient **nesmí nikdy samostatně určovat**:
+
+Klient nesmí sám stanovit:
+* `actor_user_id` (kdo je volajícím),
+* `User.global_role` (`USER` nebo `ADMIN`),
+* `Membership.role` (`OWNER`, `MANAGER`, `MEMBER`),
+* oprávnění k operaci,
+* stav své relace (`ACTIVE` / `REVOKED`),
+* platnost své autentizace.
+
+Klient smí pouze předložit svůj požadavek a prokázat se session identifikátorem.
+
+Backend autoritativně vyhodnocuje:
+```text
+1. Kdo je Actor? (zjištěno z ověřené serverové session)
+2. Je session platná a aktivní?
+3. Je uživatelský účet aktivní (is_active = true)?
+4. Jaká je globální role uživatele (USER / ADMIN)?
+5. Jaké má uživatel členství na dané Nástěnce?
+6. Má uživatel oprávnění provést požadovanou operaci nad cílovým objektem?
+```
+
+---
+
+### 23.18 API autentizačního kontraktu
+
+Logický architektonický kontrakt definuje následující sadu autentizačních operací:
+
+#### 1. Přihlášení uživatele (`POST /auth/login`)
+* **Účel:** Ověření uživatelských přihlašovacích údajů a založení aktivní relace.
+* **Volající:** Kdokoliv (veřejný endpoint).
+* **Autentizace:** Nevyžaduje se.
+* **Ověření serveru:** Shoda přihlašovacích údajů, kontrola `User.is_active = true` a `User.deleted_at IS NULL`.
+* **Výsledek:** Vytvoření instance `Session` ve stavu `ACTIVE`, bezpečné předání session credential klientovi.
+* **Typické chyby:** `401 Unauthorized` (neplatné přihlašovací údaje nebo deaktivovaný účet), `422 Unprocessable Entity` (neplatný formát vstupu).
+
+#### 2. Odhlášení uživatele (`POST /auth/logout`)
+* **Účel:** Bezpečné a okamžité ukončení aktuální relace uživatele.
+* **Volající:** Přihlášený uživatel.
+* **Autentizace:** Vyžaduje platnou session.
+* **Ověření serveru:** Existence a aktivní stav relace.
+* **Výsledek:** Session je přepnuta do stavu `REVOKED`, klientské session credential je zneplatněno.
+* **Typické chyby:** `401 Unauthorized` (neplatná, expirovaná či revokovaná session).
+
+#### 3. Získání informací o aktuální relaci (`GET /auth/session`)
+* **Účel:** Zjištění identity přihlášeného uživatele a jeho základních profilových údajů pro inicializaci UI.
+* **Volající:** Přihlášený uživatel.
+* **Autentizace:** Vyžaduje platnou session.
+* **Ověření serveru:** Validita relace a aktivní stav účtu.
+* **Výsledek:** Bezpečný profil uživatele: `id`, `name`, `email`, `global_role` (nikdy neobsahuje tajemství, hashe hesel ani privátní tokeny).
+* **Typické chyby:** `401 Unauthorized` (uživatel není přihlášen nebo session vypršela).
+
+#### 4. Požadavek na obnovu hesla (`POST /auth/recovery/request`)
+* **Účel:** Zahájení procesu bezpečné obnovy přístupu při zapomenutém heslu.
+* **Volající:** Kdokoliv (veřejný endpoint).
+* **Autentizace:** Nevyžaduje se.
+* **Ověření serveru:** Validita formátu e-mailové adresy.
+* **Bezpečnostní pravidlo:** Neutrální odpověď (ochrana proti enumeration).
+* **Výsledek:** Vygenerování jednorázového časově omezeného tokenu a odeslání e-mailové zprávy (pokud účet existuje a je aktivní).
+* **Typické chyby:** `422 Unprocessable Entity` (syntakticky neplatná adresa).
+
+#### 5. Dokončení obnovy hesla (`POST /auth/recovery/complete`)
+* **Účel:** Nastavení nového hesla na základě předloženého platného jednorázového tokenu.
+* **Volající:** Kdokoliv s platným tokenem.
+* **Autentizace:** Ověření platnosti tokenu.
+* **Ověření serveru:** Existence tokenu, kontrola expirace, ověření, že token nebyl dříve použit, splnění bezpečnostních zásad pro nové heslo.
+* **Výsledek:** Zápis nového hashe hesla, okamžitá likvidace tokenu, revokace existujících sessions uživatele.
+* **Typické chyby:** `400 Bad Request` / `401 Unauthorized` (neplatný, expirovaný nebo již použitý token), `422 Unprocessable Entity` (heslo nesplňuje požadavky).
+
+#### 6. Změna hesla přihlášeným uživatelem (`POST /auth/password/change` – volitelný endpoint)
+* **Účel:** Řádná změna hesla uživatelem, který zná své stávající heslo.
+* **Volající:** Přihlášený uživatel.
+* **Autentizace:** Vyžaduje platnou session.
+* **Ověření serveru:** Správnost stávajícího hesla, splnění požadavků na nové heslo.
+* **Výsledek:** Aktualizace hashe hesla, revokace všech ostatních relací daného uživatele.
+* **Typické chyby:** `401 Unauthorized` (chybné původní heslo), `422 Unprocessable Entity`.
+
+---
+
+### 23.19 Chybový model autentizace (Auth errors)
+
+V návaznosti na obecný chybový model systému ze Step 7 (podkapitola 10.12) rozlišuje autentizační vrstva následující standardní chybové stavy:
+
+* **`401 Unauthorized`:**
+  * Požadavek postrádá autentizační údaje (chybějící session).
+  * Session identifikátor je neplatný, neexistující nebo poškozený.
+  * Session překročila dobu platnosti (`EXPIRED`).
+  * Session byla explicitně zneplatněna (`REVOKED`).
+  * Byly předloženy nesprávné přihlašovací údaje při přihlašování.
+  * Pokus o autentizaci uživatele, jehož účet je deaktivován (`is_active = false`).
+  * Recovery token je neplatný, expirovaný nebo již dříve použitý.
+* **`403 Forbidden`:**
+  * Uživatel byl úspěšně autentizován, ale nemá dostatečná oprávnění k provedení požadované operace (např. uživatel bez role `ADMIN` se pokouší o administrativní zásah).
+* **`422 Unprocessable Entity`:**
+  * Požadavek je syntakticky správný, ale obsahuje sémanticky neplatné údaje (např. neplatný formát e-mailové adresy, heslo nesplňující minimální délku či komplexitu).
+* **`409 Conflict`:**
+  * Konflikt v identitních datech (např. pokus o registraci s e-mailovou adresou, která již v systému existuje).
+
+---
+
+### 23.20 Audit autentizačních a bezpečnostních událostí
+
+Systém Nástěnka důsledně odděluje:
+* **Business/Domain Events:** Události v životním cyklu Nástěnek, úkolů, členství a oblastí (detailně popsané v kapitolách 10, 11 a 14).
+* **Security/Auth Events:** Události v životním cyklu uživatelských identit, přihlašovacích relací a bezpečnostních rolí.
+
+#### Zaznamenávané bezpečnostní události
+Bezpečnostní auditní stopa zaznamenává minimálně následující události:
+* `LOGIN_SUCCESS`: Úspěšné přihlášení uživatele (identifikátor `user_id`, časové razítko, metadata relace).
+* `LOGIN_FAILURE`: Neúspěšný pokus o přihlášení (pokusný e-mail, důvod odmítnutí, časové razítko).
+* `LOGOUT`: Řádné odhlášení uživatele a ukončení relace.
+* `SESSION_REVOKED`: Nucená revokace session (s uvedením důvodu: změna hesla, deaktivace účtu, zásah Admina).
+* `ACCOUNT_DEACTIVATED`: Deaktivace uživatelského účtu (`is_active = false`).
+* `PASSWORD_CHANGED`: Změna hesla provedená přihlášeným uživatelem.
+* `PASSWORD_RECOVERY_COMPLETED`: Úspěšné dokončení obnovy hesla přes recovery token.
+* `GLOBAL_ROLE_CHANGED`: Povýšení uživatele na roli `ADMIN` nebo odebrání role `ADMIN`.
+
+#### Závazné pravidlo ochrany tajemství
+> [!CAUTION]
+> **Citlivé autentizační údaje a tajemství se NIKDY nesmí ukládat do auditní stopy.**
+> Do auditního logu, provozních logů ani chybových zpráv nesmí být nikdy zapsáno heslo v otevřeném textu, hash hesla, session identifikátor/tajemství ani jednorázový recovery token.
+> Auditní záznam uchovává výhradně fakt, že k bezpečnostní události došlo, čas události, identitu aktéra a kontextové ID, nikoliv samotná tajemství.
+
+---
+
+### 23.21 Globální role ADMIN a nouzové administrativní zásahy
+
+Vztah globální role `ADMIN` k autentizační a autorizační architektuře:
+
+1. **Povinná autentizace:** Uživatel s rolí `ADMIN` nemá žádnou zadní výjimku z autentizačního procesu. Musí projít standardním ověřením své identity a získat platnou session.
+2. **Autorizační oprávnění:** Zvýšená oprávnění (převod opuštěné Nástěnky, zásahy v krizových situacích, deaktivace účtů) získává uživatel výhradně na základě serverového ověření hodnoty `User.global_role = 'ADMIN'`.
+3. **Nezávislost na členství:** `ADMIN` smí provádět definované krizové zásahy i na Nástěnkách, kde není evidován jako člen v tabulce `Membership`.
+4. **Zákaz klientského deklarování role:** Klient nemůže v požadavku deklarovat `global_role = 'ADMIN'`, aby obešel bezpečnostní kontrolu.
+5. **Povinný audit administrativních zásahů:** Každý zásah provedený z titulu role `ADMIN` musí vytvořit neměnný záznam v auditním logu s typem operace `ADMIN_INTERVENTION` a identifikací daného administrátora.
+
+---
+
+### 23.22 Ochrana proti impersonaci
+
+Architektura přísně zamezuje jakékoliv možnosti vydávat se za jiného uživatele (impersonace):
+
+#### Zákaz klientského určování Actora
+Pokud klient odešle API požadavek, server striktně rozlišuje sémantiku parametrů:
+
+```text
+POST /boards/101/transfer-ownership
+Payload: { "target_user_id": 25 }
+```
+
+* `target_user_id = 25` je legitimní parametr určující **cíl operace (Target)** – uživatele, na kterého má být vlastnictví převedeno.
+* Kdo je **vykonavatelem operace (Actor)**, však server určuje **výhradně z ověřené session**.
+* Pokud by klient do těla požadavku přidal `actor_user_id = 10`, backend tento atribut zcela ignoruje (nebo jej odmítne jako nevalidní).
+* Identita Actora je determinována výhradně serverovým kontextem relace. Pokud uživatel navázaný na tuto relaci není stávajícím Ownerem Nástěnky 101 ani Adminem, server operaci neprodleně zamítne chybou `403 Forbidden`.
+
+---
+
+### 23.23 Souhrnný přehled životního cyklu identity a session
+
+Následující schémata shrnují klíčové toky identit a relací v systému:
+
+#### 1. Standardní průchod operací
+```text
+User vytvořen
+     │
+     ▼
+Role přidělena (USER / ADMIN)
+     │
+     ▼
+Aktivní účet (is_active = true)
+     │
+     ▼
+Přihlášení (POST /auth/login)
+     │
+     ▼
+Session ACTIVE
+     │
+     ▼
+API Požadavek s credential
+     │
+     ▼
+Sestavení ActorContextu (backend)
+     │
+     ▼
+Autorizační kontrola (Step 7)
+     │
+     ▼
+Provedení doménové operace (Step 7 / Step 8)
+```
+
+#### 2. Ukončení session odhlášením (Logout)
+```text
+ACTIVE SESSION  ──►  POST /auth/logout  ──►  Session REVOKED  ──►  Následné požadavky: 401
+```
+
+#### 3. Vypršení session časem (Timeout / Expiration)
+```text
+ACTIVE SESSION  ──►  Timeout / nečinnost  ──►  Session EXPIRED  ──►  Následné požadavky: 401
+```
+
+#### 4. Deaktivace uživatelského účtu
+```text
+Aktivní uživatel (User)  ──►  Deaktivace (is_active = false)
+                                     │
+                                     ├──►  Všechny sessions: REVOKED
+                                     │
+                                     └──►  Nový login: ZABLOKOVÁN (401)
+```
+
+---
+
+### 23.24 Bezpečnostní invarianty autentizace
+
+Architektura autentizačního subsystému garantuje dodržení následujících sedmnácti bezpečnostních invariantů:
+
+1. **Ověřená identita:** Každý požadavek na chráněný zdroj musí mít ověřenou identitu uživatele.
+2. **Autorita serveru nad Actor:** Identita volajícího (`actor_user_id`) je vždy určena serverem ze zvalidované session, nikdy z klientského vstupu.
+3. **Stabilita interní identity:** `User.id` je stabilní a kanonický identifikátor, který se nikdy nemění při změnách e-mailu či profilu.
+4. **Separace globální role a členství:** Globální role `User.global_role` (`USER` / `ADMIN`) je striktně oddělena od lokální role `Membership.role` (`OWNER`, `MANAGER`, `MEMBER`).
+5. **Blokace deaktivovaného účtu:** Uživatel s `is_active = false` nebo s vyplněným `deleted_at` se nemůže úspěšně přihlásit.
+6. **Okamžitá revokace relací deaktivovaného účtu:** Deaktivace uživatele okamžitě činí všechny jeho existující sessions neplatnými (`REVOKED`).
+7. **Zákaz expirovaných a revokovaných relací:** Expirovaná nebo revokovaná session nesmí autorizovat žádný požadavek.
+8. **Odolnost session:** Identifikátory session musí být chráněny proti předvídatelnosti, odposlechu a krádeži (kryptografická entropie, TLS, bezpečnostní atributy).
+9. **Dynamická autorizace:** Session reprezentuje ověřenou identitu uživatele, nikoliv statickou kopii jeho oprávnění; autorizační vrstva vyhodnocuje aktuální stav práv při každém požadavku.
+10. **Okamžitý dopad změn rolí:** Změna v `Membership.role` nebo `User.global_role` se musí projevit v autorizačním rozhodování okamžitě bez nutnosti nového loginu.
+11. **Nepodvrhnutelnost role ADMIN:** Roli `ADMIN` nelze získat manipulací s klientskými daty v požadavku.
+12. **Zákaz plaintext hesel:** Uživatelská hesla se nikdy neukládají v otevřeném textu; musí být použito bezpečné jednosměrné kryptografické hashování se solí.
+13. **Jednorázovost a časové omezení recovery mechanismu:** Tokeny pro obnovu přístupu jsou časově přísně omezené, jednorázově spotřebitelné a po použití okamžitě zanikají.
+14. **Čistota auditní stopy:** Žádná autentizační tajemství (hesla, tokeny, session secrets) nesmí být součástí auditních ani provozních záznamů.
+15. **Nezaměnitelnost identity s prezentačními atributy:** Interní identita `User.id` nesmí být v doménových vazbách zaměňována s e-mailem, jménem ani externím provider ID.
+16. **Ochrana dat při ukončení relace:** Ukončení relace (logout) ani revokace session neodstraňuje historická data uživatele ani jeho doménové vazby.
+17. **Striktní vrstvení autentizace a autorizace:** Autentizace a autorizace představují samostatné, nezaměnitelné a vzájemně oddělené systémové vrstvy.
+
+---
+
+### 23.25 Rozhodnutí odložená do implementační fáze
+
+Následující technologická a implementační rozhodnutí **nejsou v tomto architektonickém kroku schválena ani závazně vybrána** a jejich konkrétní volba je záměrně odložena do implementační fáze:
+
+* **Konkrétní autentizační provider či knihovna:** Volba konkrétního řešení (např. Auth.js / NextAuth, Supabase Auth, Clerk, Firebase Auth či vlastní implementace) zůstává otevřená.
+* **Fyzické úložiště session:** Konkrétní technologické uložení relací (relační databázová tabulka, Redis, in-memory store či zabezpečený server-side session store) bude zvoleno při implementaci.
+* **Mechanismus transportu session credential:** Konkrétní volba mezi zabezpečenými HTTP cookies a Authorization bearer hlavičkami bude určena podle zvolené frontendové a backendové architektury.
+* **Kryptografický algoritmus pro hashování hesel:** Volba konkrétního algoritmu (Argon2id, bcrypt, PBKDF2) a jeho parametrů náročnosti bude specifikována v technickém návrhu.
+* **Poskytovatel e-mailových služeb:** Konkrétní integrační služba pro odesílání odkazů na obnovu hesla (SMTP, Resend, SendGrid, Postmark apod.) bude vybrána v integrační fázi.
+* **Vícefaktorová autentizace (MFA / 2FA):** Zavedení TOTP či SMS kódů je plánováno jako budoucí volitelné rozšíření bezpečnosti.
+* **Rate limiting a ochrana proti brute-force útokům:** Konkrétní limity četnosti pokusů o přihlášení a blokovací mechanismy budou definovány v implementaci API brány.
+* **Federovaná identita (OAuth / OIDC / SSO):** Případné přihlašování přes externí poskytovatele (Google, Microsoft, Apple) není pro 1. verzi systému vyžadováno a zůstává otevřené pro budoucí verze.
+
+> [!NOTE]
+> Step 9 stanovuje závazné funkční a bezpečnostní požadavky, hranice a invarianty, nikoliv konkrétní implementační software. Výše uvedená rozhodnutí budou učiněna v navazujících technických krocích vývoje.
+
+---
+
+## 24. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -2157,3 +2814,4 @@ V současné verzi architektury nejsou evidovány žádné další otevřené ot
 | **0.4.0** | 19. 9. 2026 | Krok 6: Datový model a vztahy – definice User, Board, Membership, Task a TaskParticipant, globální role ADMIN, role OWNER / MANAGER / MEMBER v Membership, kardinality a databázové invarianty, vztahy Task → creator / assignee / participants, oddělení role na Boardu od odpovědnosti za Task, pravidla pro převod Ownera, pravidla pro deaktivaci Usera a soft-delete Boardu. | Antigravity / Product Owner |
 | **0.5.0** | 19. 9. 2026 | Step 7: Doménové operace, API a autorizační hranice – princip autority backendu, kontext actor vs. target, logické API operace nad Board, Membership, Task a Area (včetně řízeného hard-delete Tasku a smazání oblasti), autorizační matice, nezávislý audit destruktivních operací (DELETE_TASK, DELETE_AREA), atomické transakce a doménové invarianty. | Antigravity / Product Owner |
 | **0.6.0** | 19. 9. 2026 | Step 8 – Databázové schéma, primární a cizí klíče, constrainty, referenční integrita, transakční hranice a databázové invarianty. | Antigravity / Product Owner |
+| **0.7.0** | 19. 9. 2026 | Step 9 – Autentizace, identity, session, životní cyklus přihlášení, ochrana identity Actor a oddělení autentizace od autorizace. | Antigravity / Product Owner |
