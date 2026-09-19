@@ -1,10 +1,10 @@
 # Architektura aplikace Nástěnka
 
-**Typ dokumentu:** Logická architektura a doménový model systému  
-**Stav:** Schválená architektura  
-**Verze:** 0.4.0  
-**Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)  
-**Datum:** 19. 9. 2026  
+**Typ dokumentu:** Logická architektura a doménový model systému<br>
+**Stav:** Schválená architektura<br>
+**Verze:** 0.5.0<br>
+**Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
+**Datum:** 19. 9. 2026
 
 ---
 
@@ -794,7 +794,16 @@ V datovém modelu **neexistuje žádná implicitní vazba**:
 
 ### 9.13 Životní cyklus, soft-delete a deaktivace
 
-Vzhledem k množství referenčních vazeb (autorství úkolů, řešitelství, komentáře, auditní záznamy) je v systému zakázáno nekontrolované fyzické mazání dat z databáze (`HARD DELETE`).
+Architektura striktně rozlišuje mezi standardním mechanismem zachování historie a výslovně povolenými destruktivními zásahy:
+
+* **Soft-delete (logické smazání / deaktivace):** Standardní mechanismus tam, kde je požadována obnova, auditovatelnost vazeb či dlouhodobé uchování historie objektu v celém kontextu systému (např. Nástěnka, uživatelský účet).
+* **Controlled hard-delete (řízené trvalé smazání):** Výslovně povolená destruktivní doménová operace u objektů, u kterých to doménový návrh explicitně dovoluje (úkol `Task`, oblast `Area`). Nejde o nekontrolované mazání databáze, ale o přísně ohraničenou operaci:
+  * je chráněna konkrétním oprávněním v autorizační matici,
+  * vyžaduje bezpečnostní potvrzení vepsáním přesného textu `SMAZAT`,
+  * probíhá atomicky v jediné transakci (včetně kaskádního vyčištění podřízených vazeb bez vzniku sirotků),
+  * zanechává neměnnou stopu v nezávislém auditním protokolu (`DELETE_TASK`, `DELETE_AREA`),
+  * po dokončení není smazaný objekt dostupný v aktivním seznamu, v archivu ani v běžné historii daného objektu.
+* **Zákaz nekontrolovaného hard-delete:** Je přísně zakázáno jakékoliv nekontrolované, mimodoménové fyzické mazání dat z databáze, které by obcházelo autorizační kontrolu, transakční hranice či tvorbu auditní stopy a vedlo ke vzniku nekonzistencí či ztrátě dohledatelnosti.
 
 #### 1. Deaktivace a soft-delete uživatele (`User`)
 * Atributy: `is_active = false`, `deleted_at = Timestamp`.
@@ -810,6 +819,12 @@ Vzhledem k množství referenčních vazeb (autorství úkolů, řešitelství, 
   * možnost havarijní obnovy (recovery) při nechtěném smazání,
   * zachování referenční integrity v historických a bezpečnostních protokolech,
   * bezpečnost a ochrana dat před neoprávněnými destruktivními zásahy.
+
+#### 3. Řízené trvalé smazání úkolu (`Task`) a oblasti (`Area`)
+* Představuje aplikaci principu **controlled hard-delete**.
+* **Úkol (`Task`):** Po autorizovaném potvrzení textem `SMAZAT` je trvale odstraněn ze systému; transakčně jsou odstraněny také jeho vazby (např. `TaskParticipant`).
+* **Oblast (`Area`):** Po autorizovaném potvrzení textem `SMAZAT` je trvale odstraněna společně se všemi úkoly, které obsahuje (kaskádní řízený hard-delete bez vzniku osiřelých entit).
+* V obou případech se do nezávislého auditního logu Nástěnky zapíše záznam `DELETE_TASK` resp. `DELETE_AREA` zachovávající metadata o tom, kdo, kdy a co smazal.
 
 ---
 
@@ -944,7 +959,414 @@ Krok 6 je v plné a stoprocentní shodě se schváleným modelem oprávnění a 
 
 ---
 
-## 10. Stavový model úkolu
+## 10. Step 7 – Doménové operace, API a autorizační hranice
+
+Tato kapitola definuje logický kontrakt aplikačního rozhraní (API), katalog podporovaných doménových operací, pravidla autorizace na straně serveru, transakční hranice a invarianty, které musí systém zachovat při každém požadavku. Dokument představuje **architektonický návrh kontraktu**, nikoliv konkrétní implementační specifikaci či technologickou volbu (REST/GraphQL/gRPC).
+
+---
+
+### 10.1 Princip autority backendu
+
+Architektura striktně vychází ze zásady, že klientská část aplikace (uživatelské rozhraní) je pouze prezentační vrstvou:
+
+* **Role frontendu:** Frontend dynamicky přizpůsobuje zobrazení, skrývá nepovolená tlačítka a deaktivuje formulářové prvky podle známé role uživatele za účelem ergonomie (UX).
+* **Frontend není bezpečnostní autorita:** Pouhé skrytí či znepřístupnění prvku v uživatelském rozhraní nepředstavuje žádnou úroveň zabezpečení.
+* **Serverové ověření každého požadavku:** Každý příchozí chráněný API požadavek musí backend/server plně a nezávisle autorizovat a validovat dříve, než provede jakoukoliv změnu stavu či dat.
+* **Kontrolní seznam backendu před provedením operace:**
+  1. **Autentizace volajícího:** Je volající ověřeným systémovým uživatelem?
+  2. **Existence a stav cílového objektu:** Existuje cílová entita a není v logicky smazaném stavu (`deleted_at`)?
+  3. **Vztah k Nástěnce (Membership):** Je volající členem dané Nástěnky, nebo disponuje globální rolí `ADMIN`?
+  4. **Autorizace role:** Má role volajícího oprávnění vyvolat tuto konkrétní operaci?
+  5. **Doménová pravidla a invarianty:** Splňuje požadavek veškerá kontextová pravidla (např. platnost přiřazení k Nástěnce, existence řešitele při přidání spoluřešitele, transakční limity)?
+* **Zákaz implicitního oprávnění:** Samotný fakt, že klient odeslal korektně zformátovaný HTTP požadavek, nesmí být nikdy interpretován jako oprávnění k jeho vykonání.
+
+> [!IMPORTANT]
+> **Frontend UX omezení ≠ bezpečnostní omezení.**
+> Bezpečnost systému je garantována výhradně autorizační logikou backendu.
+
+---
+
+### 10.2 Kontext volajícího: Actor vs. Target
+
+Každý chráněný požadavek je v aplikační vrstvě vyhodnocován v explicitním kontextu volání. Architektura důsledně rozlišuje tyto pojmy:
+
+* **Actor (Iniciátor):** Uživatelský účet, který operaci vyvolává a jehož autentizační identita je spojena s příchozím požadavkem (`actor_user_id`, `actor_global_role`, `actor_board_role`).
+* **Target (Cíl operace):** Uživatel, entita nebo datový objekt, kterého se prováděná operace bezprostředně týká (`target_user_id`, `target_board_id`, `target_task_id`).
+* **Kontextový rámec požadavku obsahuje:**
+  * `actor_user_id`: jednoznačná identita volajícího,
+  * `global_role`: systémová role volajícího (`USER` | `ADMIN`),
+  * `board_id`: kontext konkrétní Nástěnky, v němž operace probíhá,
+  * `target`: identifikace cílového objektu či entity,
+  * `operation`: název vyvolávané doménové akce.
+
+*Příklad:*
+```text
+Operace: Převod vlastnictví Nástěnky
+Actor  : Milan (ID: 1, současný OWNER)
+Target : Jan (ID: 2, budoucí OWNER)
+Board  : Nástěnka "Prodejna" (ID: 101)
+```
+Toto rozlišení je klíčové pro správné vyhodnocení autorizace (zda Actor smí manipulovat s Targetem) i pro zápis do auditní stopy (kdo změnu vyvolal vs. koho/čeho se změna týká).
+
+---
+
+### 10.3 Operace nad Board (Nástěnka)
+
+#### 1. Vytvoření Nástěnky (`POST /boards`)
+* **Účel:** Založení nového samostatného týmového prostoru.
+* **Actor:** Běžný uživatel (`USER`) nebo administrátor (`ADMIN`).
+* **Požadované oprávnění:** Kterýkoliv přihlášený aktivní uživatel.
+* **Pravidla a transakční chování:**
+  * Operace je **striktně atomická** – v rámci jedné transakce vznikne `Board`, zakladatelské `Membership` a je nastavena výchozí role `OWNER`.
+  * *Běžný uživatel:* Zakladatel (`actor_user_id`) je zapsán do `Board.created_by` a zároveň získává `Membership(role = OWNER)`.
+  * *ADMIN pro sebe:* Admin je zapsán do `Board.created_by` a získává `Membership(role = OWNER)`.
+  * *ADMIN pro jiného uživatele:* Admin zadá cílového uživatele (`target_user_id`); `Board.created_by` = Admin, avšak `Membership(role = OWNER)` je vytvořeno pro cílového uživatele. Admin nemusí být členem Nástěnky.
+* **Validační podmínky:** Název Nástěnky nesmí být prázdný; target uživatel musí existovat a být aktivní.
+* **Audit:** Zapisuje se vznik Nástěnky.
+
+#### 2. Úprava Nástěnky (`PATCH /boards/{boardId}`)
+* **Účel:** Změna názvu, popisu a běžných provozních metadat Nástěnky.
+* **Actor a oprávnění:**
+  * `OWNER`: ANO (plná správa metadat).
+  * `MANAGER`: ANO (pokud jde o běžnou organizační správu Nástěnky a oblastí).
+  * `ADMIN`: ANO (administrativní zásah).
+  * `MEMBER`: NE (zakázáno).
+* **Oddělení kompetencí:** Tato operace slouží výhradně pro běžná metadata Nástěnky. Změny členství, rolí a převod vlastnictví jsou samostatné specializované endpointy a **nesmí být přes tuto operaci proveditelné**.
+* **Validační podmínky:** Nástěnka musí existovat a nesmí být soft-deleted.
+
+#### 3. Smazání Nástěnky (`DELETE /boards/{boardId}`)
+* **Účel:** Logické odstranění Nástěnky ze systému.
+* **Actor a oprávnění:**
+  * `OWNER`: ANO (vyžaduje bezpečnostní potvrzení).
+  * `ADMIN`: ANO (administrativní odstranění / havarijní zásah).
+  * `MANAGER`: NE (zakázáno).
+  * `MEMBER`: NE (zakázáno).
+* **Mechanismus provedení:** **Soft-delete** – nastavení `Board.deleted_at = Timestamp`. Nedochází k okamžitému fyzickému smazání řádků z databáze, aby zůstala zachována referenční integrita a historie.
+* **Audit:** Povinný auditní záznam `DELETE_BOARD`.
+
+---
+
+### 10.4 Operace nad Membership (Správa členství a rolí)
+
+#### 1. Přidání člena do Nástěnky (`POST /boards/{boardId}/members`)
+* **Účel:** Zařazení nového uživatele mezi členy Nástěnky.
+* **Actor a oprávnění:**
+  * `OWNER`: ANO (může přidat člena s rolí `MEMBER` nebo `MANAGER`, pokud pozice Managera není obsazena).
+  * `MANAGER`: ANO (může přidat člena s rolí `MEMBER` v rámci běžné provozní správy týmu).
+  * `ADMIN`: ANO.
+  * `MEMBER`: NE.
+* **Hlavní vstupy:** `target_user_id`, volitelně `role` (výchozí `MEMBER`).
+* **Validační podmínky:**
+  * Cílový uživatel musí existovat a mít `is_active = true`.
+  * Cílový uživatel dosud nesmí být členem dané Nástěnky (`UNIQUE(user_id, board_id)`).
+  * Nelze tímto endpointem vytvořit druhého `OWNER`.
+* **Audit:** Povinný auditní záznam `ADD_MEMBER`.
+
+#### 2. Odebrání člena z Nástěnky (`DELETE /boards/{boardId}/members/{userId}`)
+* **Účel:** Ukončení členství uživatele na Nástěnce.
+* **Actor a oprávnění:**
+  * `OWNER`: ANO (může odebrat jakéhokoliv Managera či Membera).
+  * `MANAGER`: ANO (může odebrat běžného člena `MEMBER`; nesmí odebrat Ownera ani sám sebe povýšit).
+  * `MEMBER`: ANO (výhradně pro dobrovolný odchod sebe sama z Nástěnky).
+  * `ADMIN`: ANO.
+* **Kritická validační pravidla:**
+  * **Zákaz odebrání posledního Ownera:** Pokus odebrat uživatele s rolí `OWNER` musí backend striktně odmítnout chybou `409 Conflict`. Owner musí nejprve převést vlastnictví!
+  * **Ošetření úkolů:** Úkoly, kde byl odebraný uživatel Hlavním Řešitelem, přejdou automaticky do `Nepřiřazeno`. U úkolů, kde byl spoluřešitelem, je vazba zrušena.
+* **Audit:** Povinný auditní záznam `REMOVE_MEMBER`.
+
+#### 3. Změna role člena (`PATCH /boards/{boardId}/members/{userId}/role`)
+* **Účel:** Povýšení či změna role existujícího člena Nástěnky (`MEMBER` ↔ `MANAGER`).
+* **Actor a oprávnění:**
+  * `OWNER`: ANO (může jmenovat Managera nebo jej převést na Membera).
+  * `ADMIN`: ANO.
+  * `MANAGER`: NE (Manager nesmí měnit role ostatních uživatelů, nesmí jmenovat druhého Managera ani se povýšit na Ownera).
+  * `MEMBER`: NE.
+* **Validační pravidla a invarianty:**
+  * Cílová role smí být pouze `MANAGER` nebo `MEMBER`.
+  * **Zákaz nastavení role OWNER:** Roli `OWNER` nelze nastavit běžnou změnou role; k tomu slouží výhradně převod vlastnictví.
+  * **Dodržení limitu Managera:** Povýšení na `MANAGER` je povoleno pouze tehdy, pokud Nástěnka aktuálně žádného jiného Managera nemá (`0..1 MANAGER`).
+* **Audit:** Povinný auditní záznam `CHANGE_ROLE` nebo `CHANGE_MANAGER`.
+
+---
+
+### 10.5 Převod vlastnictví (Transfer of Ownership)
+
+Operace převodu vlastnictví představuje samostatný, vysoce chráněný doménový proces:
+
+`POST /boards/{boardId}/transfer-ownership`
+
+* **Účel:** Atomické předání vlastnického mandátu Nástěnky z aktuálního Ownera na nového člena.
+* **Actor:** Výhradně aktuální `OWNER` dané Nástěnky nebo globální `ADMIN`.
+* **Target:** Uživatel (`target_user_id`), který se má stát novým Ownerem.
+* **Závazná procesní pravidla:**
+  1. **Ověření Actora:** Pouze stávající ověřený Owner (nebo Admin) může převod iniciovat. Manager ani Member tuto operaci nesmí vyvolat.
+  2. **Podmínka členství Targetu:** Cílový uživatel musí být členem dané Nástěnky. Pokud dosud členem není, backend operaci odmítne (uživatel musí být nejprve přidán do týmu).
+  3. **Striktní transakční atomicita:** Celý proces proběhne uvnitř jediné izolované databázové transakce.
+  4. **Pravidlo pro nového a starého Ownera po převodu:**
+     * Target získává roli `OWNER`.
+     * Původní Owner ztrácí roli `OWNER`.
+     * Pokud Nástěnka aktuálně nemá Managera, původní Owner získává roli `MANAGER`.
+     * Pokud na Nástěnce již jiný Manager existuje, původní Owner získává roli `MEMBER` (je striktně dodržen invariant max. 1 Managera).
+  5. **Vyloučení nekonzistence:** V žádném okamžiku nesmí nastat stav se dvěma Ownery ani stav bez Ownera.
+  6. **Administrativní zásah Admina:** Pokud je původní Owner nedostupný (např. zrušený účet), globální Admin může direktivně určit nového Ownera ze stávajících členů Nástěnky.
+* **Audit:** Povinný auditní záznam `TRANSFER_OWNERSHIP` (včetně původního a nového stavu obou dotčených uživatelů).
+
+---
+
+### 10.6 Operace nad Task (Správa úkolů)
+
+#### 1. Vytvoření úkolu (`POST /tasks`)
+* **Účel:** Založení nové pracovní položky.
+* **Actor:** Kterýkoliv člen dané Nástěnky (`MEMBER`, `MANAGER`, `OWNER`), případně `ADMIN`.
+* **Vstupy:** `board_id`, `title`, volitelně `description`, `priority` (výchozí `BĚŽNÁ`), `area_id`, `due_date`, volitelně `assignee_id`.
+* **Pravidla a chování:**
+  * Úkol patří právě jedné Nástěnce (`board_id`).
+  * `Task.created_by` je automaticky a nezměnitelně nastaven na `actor_user_id`.
+  * Pokud je zadán `assignee_id`, musí jít o člena stejné Nástěnky. Není-li zadán, úkol vzniká ve stavu `Nepřiřazeno`.
+  * Vyvolá odeslání notifikace (WhatsApp) všem členům Nástěnky bez ohledu na přiřazení.
+
+#### 2. Úprava atributů a stavu úkolu (`PATCH /tasks/{taskId}`)
+* **Účel:** Modifikace parametrů úkolu a přechody životního cyklu.
+* **Oprávnění podle typu změny (v souladu se sekcí 7 a 8):**
+  * *Popis, název a priorita (`BĚŽNÁ` ↔ `SPĚCHÁ`):* Může upravit **kterýkoliv člen Nástěnky**.
+  * *Stav úkolu (přechody stavového modelu):* Smí měnit **Hlavní Řešitel (`assignee_id`)**, **Spoluřešitelé (`TaskParticipant`)**, provozní správce (`MANAGER`), vlastník (`OWNER`) a `ADMIN`.
+  * *Termín splnění (`due_date`) a přesun oblasti (`area_id`):* Smí měnit Hlavní Řešitel, Spoluřešitel, Manager, Owner a Admin.
+* **Validační podmínky:** Úkol musí existovat na dané Nástěnce; stavový přechod musí odpovídat povoleným stavům; termín musí mít platný formát.
+
+#### 3. Změna řešitele úkolu (`PATCH /tasks/{taskId}/assignee`)
+* **Účel:** Přidělení úkolu, převzetí na sebe nebo uvolnění do stavu Nepřiřazeno.
+* **Actor a oprávnění:** **Kterýkoliv člen dané Nástěnky** (`MEMBER`, `MANAGER`, `OWNER`, `ADMIN`).
+* **Pravidla:**
+  * Uživatel může úkol převzít na sebe (stát se Hlavním Řešitelem).
+  * Uživatel může úkol delegovat kterémukoli jinému členovi dané Nástěnky.
+  * Uživatel může úkol nastavit na `Nepřiřazeno` (`assignee_id = NULL`).
+  * **Podmínka členství:** Cílový řešitel (`target_assignee_id`) musí být aktivním členem stejné Nástěnky.
+* **Audit:** Zaznamenává se změna řešitele v historii změn úkolu.
+
+#### 4. Řízené trvalé smazání úkolu (`DELETE /tasks/{taskId}`)
+* **Účel:** Vědomě definovaná a řízená destruktivní doménová operace trvalého odstranění úkolu ze systému (controlled hard-delete, nikoliv nekontrolované mazání dat).
+* **Actor a oprávnění:** Hlavní Řešitel daného úkolu, Spoluřešitel daného úkolu, Provozní správce (`MANAGER`), Vlastník (`OWNER`) nebo `ADMIN`.
+* **Podmínka provedení:** Vyžaduje striktní bezpečnostní potvrzení vepsáním přesného textu `SMAZAT` v těle požadavku.
+* **Transakční chování:** Operace probíhá atomicky v jediné transakci – fyzicky odstraní záznam `Task`, kaskádně odstraní přiřazené vazby (`TaskParticipant`) bez vzniku sirotčích dat a zapíše nezávislý auditní záznam `DELETE_TASK`.
+* **Důsledek:** Úkol definitivně zaniká; po smazání není dostupný v aktivním seznamu, v archivu ani v běžné historii úkolu.
+* **Nezávislá auditní stopa:** Záznam `DELETE_TASK` se zapisuje do nezávislého auditního logu Nástěnky, kde zůstává trvale zachován i po fyzickém zániku samotného úkolu.
+* **Hlavní chybové stavy:**
+  * `401 Unauthorized`: Volající není autentizován.
+  * `403 Forbidden`: Volající není řešitelem, spoluřešitelem ani správcem dané Nástěnky.
+  * `404 Not Found`: Úkol neexistuje nebo byl již smazán.
+  * `422 Unprocessable Entity`: Chybějící nebo nesprávný potvrzovací text (rozdílný od `SMAZAT`).
+
+#### 5. Připojení spoluřešitele (`POST /tasks/{taskId}/participants`)
+* **Účel:** Dobrovolné zapojení dalšího člena týmu do řešení úkolu.
+* **Actor:** Kterýkoliv člen dané Nástěnky, který se připojuje sám za sebe (`+ Připojit se k úkolu`).
+* **Podmínka existence:** Úkol **musí mít Hlavního Řešitele** (`assignee_id IS NOT NULL`). U úkolu ve stavu `Nepřiřazeno` se nelze stát spoluřešitelem.
+* **Omezení:** Neexistuje funkce pro vnucené přidání cizího člena jako spoluřešitele jiným členem.
+
+#### 6. Odpojení / odebrání spoluřešitele (`DELETE /tasks/{taskId}/participants/{userId}`)
+* **Účel:** Odstranění uživatele ze seznamu spoluřešitelů.
+* **Oprávnění:**
+  * *Dobrovolné odpojení:* Spoluřešitel se může sám kdykoliv odpojit (`actor_user_id == target_user_id`).
+  * *Odebrání Hlavním Řešitelem:* Hlavní Řešitel (`assignee_id`) může Spoluřešitele z úkolu odebrat.
+  * *Správní zásah:* Manager, Owner a Admin mohou spoluřešitele odebrat z titulu správy.
+  * *Zákaz:* Jiný Spoluřešitel ani běžný člen cizího spoluřešitele odebrat nesmí.
+* **Důsledek:** Odebraný člen není blokován a může se v budoucnu znovu připojit, pokud má úkol Hlavního Řešitele.
+
+---
+
+### 10.7 Operace nad Area (Správa oblastí)
+
+#### 1. Řízené smazání oblasti (`DELETE /boards/{boardId}/areas/{areaId}`)
+* **Účel:** Vědomě definovaná a řízená destruktivní doménová operace trvalého odstranění organizační oblasti Nástěnky včetně všech úkolů, které do ní patří (controlled hard-delete).
+* **Actor a oprávnění:** Provozní správce (`MANAGER`), Vlastník (`OWNER`) nebo `ADMIN` (běžný člen `MEMBER` nemá oprávnění mazat oblasti).
+* **Podmínka provedení:** Vyžaduje striktní bezpečnostní potvrzení vepsáním přesného textu `SMAZAT` v těle požadavku.
+* **Transakční atomicita:** Celá operace probíhá jako jediná nedílná transakce (vše nebo nic). V rámci této transakce dojde k:
+  1. ověření existence oblasti v rámci zadané Nástěnky (`board_id`),
+  2. vyhledání všech úkolů náležejících do této oblasti (`Task.area_id == areaId`),
+  3. kaskádnímu trvalému odstranění všech těchto úkolů a jejich vazeb (`TaskParticipant`),
+  4. trvalému odstranění samotné entity `Area`,
+  5. zápisu auditního záznamu `DELETE_AREA` do nezávislého auditního logu Nástěnky.
+* **Smazání obsažených Tasků:** Všechny úkoly zařazené do mazané oblasti definitivně zanikají podle schváleného pravidla (úkoly se nepřesouvají do archivu ani koše a nevznikají žádné sirotčí vazby).
+* **Auditní stopa:** Záznam `DELETE_AREA` (včetně identifikace oblasti a metadat o smazaných úkolech) zůstává trvale zachován v nezávislém auditním protokolu Nástěnky.
+* **Hlavní chybové stavy:**
+  * `401 Unauthorized`: Volající není autentizován.
+  * `403 Forbidden`: Volající je pouze v roli `MEMBER` (nedostatečná oprávnění pro destruktivní organizační zásah).
+  * `404 Not Found`: Nástěnka nebo oblast neexistuje, případně oblast nepatří k zadané Nástěnce.
+  * `409 Conflict`: Souběžná operace nad oblastí nebo pokus o smazání již neexistující oblasti.
+  * `422 Unprocessable Entity`: Chybějící nebo nesprávný potvrzovací řetězec (rozdílný od `SMAZAT`).
+
+---
+
+### 10.8 Pravidla pro přiřazení Tasku a integrita členství
+
+Backend striktně vymáhá pravidlo teritoriální integrity Nástěnky:
+
+> **Assignee i všichni Spoluřešitelé úkolu musí mít v okamžiku přiřazení platné a aktivní členství (`Membership`) na stejné Nástěnce, do které daný úkol patří.**
+
+```text
+POŽADAVEK: Nastavit Task(board_id = B).assignee_id = User(U)
+BACKEND OVĚŘUJE:
+EXISTS Membership WHERE user_id = U AND board_id = B AND is_active = true
+POKUD NEEXISTUJE → HTTP 422 Unprocessable Entity ("Uživatel není členem dané Nástěnky")
+```
+
+#### Řešení zániku členství uživatele:
+Pokud uživatel Nástěnku opustí nebo je odebrán:
+1. **Aktivní přiřazení:** U úkolů, kde byl Hlavním Řešitelem, systém automaticky nastaví `assignee_id = NULL` (přechod do stavu `Nepřiřazeno`).
+2. **Spoluřešitelství:** Uživatel je automaticky odstraněn ze všech záznamů `TaskParticipant` na dané Nástěnce.
+3. **Historická data:** Hodnota `Task.created_by` (autorství), dřívější komentáře a záznamy v auditním logu zůstávají plně zachovány pod identifikátorem uživatele pro zajištění historické konzistence.
+
+---
+
+### 10.9 Stavové a validační chyby
+
+Systém implementuje jednotnou sémantiku chybových stavů:
+
+* **`401 Unauthorized` (Neautentizovaný požadavek):**
+  * Požadavek neobsahuje platnou autentizační relaci či token.
+  * Identita volajícího není známa.
+* **`403 Forbidden` (Nedostatečné oprávnění):**
+  * Actor je autentizován, ale nemá oprávnění operaci provést (např. Member zkouší měnit role; Manager zkouší převést vlastnictví; uživatel není členem dané Nástěnky a není Admin).
+* **`404 Not Found` (Objekt nenalezen):**
+  * Cílový `Board`, `Task`, `Area`, `Membership` nebo `User` v systému neexistuje, případně byl logicky smazán (`deleted_at IS NOT NULL`).
+* **`409 Conflict` (Konflikt stavu a invariantů):**
+  * Pokus o porušení strukturálních invariantů systému:
+    * pokus jmenovat druhého Managera, když pozice již existuje (`0..1 MANAGER`),
+    * pokus odstranit posledního Ownera Nástěnky bez předchozího převodu,
+    * pokus o vytvoření duplicitního členství téhož uživatele na Nástěnce,
+    * pokus o smazání oblasti, která již byla smazána jiným uživatelem.
+* **`422 Unprocessable Entity` (Sémantická validační chyba):**
+  * Požadavek je syntakticky v pořádku, ale porušuje doménová pravidla:
+    * pokus přiřadit úkol uživateli, který není členem dané Nástěnky,
+    * pokus připojit se jako Spoluřešitel k úkolu ve stavu `Nepřiřazeno`,
+    * chybějící nebo nesprávný potvrzovací text při mazání (nebylo zadáno přesně `SMAZAT`),
+    * prázdný název Nástěnky nebo úkolu.
+
+---
+
+### 10.10 Autorizační matice API operací
+
+Následující tabulka definuje oprávnění k vyvolání jednotlivých API operací podle rolí v systému:
+
+| Operace / Endpoint | ADMIN | OWNER | MANAGER | MEMBER |
+|---|:---:|:---:|:---:|:---:|
+| **Vytvořit board** (`POST /boards`) | ANO | ANO | ANO | ANO |
+| **Upravit board** (`PATCH /boards/{id}`) | ANO | ANO | ANO* | NE |
+| **Smazat board** (`DELETE /boards/{id}`) | ANO | ANO | NE | NE |
+| **Smazat oblast** (`DELETE /boards/{id}/areas/{areaId}`) | ANO | ANO | ANO | NE |
+| **Přidat člena** (`POST /boards/{id}/members`) | ANO | ANO | Dle pravidel* | NE |
+| **Odebrat člena** (`DELETE /boards/{id}/members/{uid}`) | ANO | ANO | Dle pravidel* | NE* |
+| **Změnit roli člena** (`PATCH /members/{uid}/role`) | ANO | ANO | Omezeně* | NE |
+| **Změnit OWNERA** (direktivně) | ANO | NE | NE | NE |
+| **Převést OWNERA** (`POST /transfer-ownership`) | ANO | ANO | NE | NE |
+| **Vytvořit task** (`POST /tasks`) | ANO* | ANO | ANO | ANO |
+| **Upravit task** (`PATCH /tasks/{id}`) | ANO* | ANO | ANO | Dle pravidel tasku* |
+| **Smazat task** (řízený hard-delete) (`DELETE /tasks/{id}`) | ANO* | ANO | ANO | Dle pravidel tasku* |
+| **Změnit assignee** (`PATCH /tasks/{id}/assignee`) | ANO* | ANO | ANO | Dle pravidel tasku* |
+| **Spravovat participanty** (`/tasks/{id}/participants`) | ANO* | ANO | ANO | Dle pravidel tasku* |
+
+#### Podrobná pravidla a vysvětlivky k matici:
+* `ADMIN (ANO*)`: Globální Admin má právo administrativního zásahu do kteréhokoliv objektu pro řešení krizových a zablokovaných stavů, aniž by musel být členem dané Nástěnky.
+* `Upravit board (MANAGER = ANO*)`: Manager smí upravovat běžná provozní metadata a oblasti, nesmí však Nástěnku smazat ani měnit vlastnictví.
+* `Smazat oblast (MEMBER = NE)`: Běžný člen nesmí mazat organizační oblasti Nástěnky. Právo náleží výhradně Managerovi, Ownerovi a Adminovi s potvrzením `SMAZAT`.
+* `Přidat člena (MANAGER = Dle pravidel*)`: Manager smí přidávat nové členy výhradně s výchozí rolí `MEMBER`.
+* `Odebrat člena (MANAGER = Dle pravidel*)`: Manager smí odebrat řadového člena (`MEMBER`), nesmí však odebrat Ownera ani sám sebe povýšit.
+* `Odebrat člena (MEMBER = NE*)`: Běžný člen nemůže odebírat ostatní členy; má však právo sám z Nástěnky vystoupit (odebrat sebe sama).
+* `Změnit roli člena (MANAGER = Omezeně*)`: Manager nesmí měnit role existujících členů ani jmenovat druhého Managera.
+* `Upravit task (MEMBER = Dle pravidel tasku*)`: Řadový člen smí upravit název, popis a prioritu jakéhokoliv úkolu. Změnu stavu, termínu splnění a oblasti smí provést pouze tehdy, je-li Hlavním Řešitelem nebo Spoluřešitelem daného úkolu.
+* `Smazat task (MEMBER = Dle pravidel tasku*)`: Řadový člen smí trvale smazat úkol pouze tehdy, je-li jeho Hlavním Řešitelem nebo Spoluřešitelem, a to výhradně s potvrzením `SMAZAT`.
+* `Změnit assignee (MEMBER = Dle pravidel tasku*)`: Každý člen Nástěnky smí přidělit úkol kterémukoli členovi dané Nástěnky, převzít jej na sebe nebo nastavit na `Nepřiřazeno`.
+* `Spravovat participanty (MEMBER = Dle pravidel tasku*)`: Člen se smí sám připojit jako Spoluřešitel (pokud má úkol řešitele) nebo se sám odpojit. Cizího spoluřešitele smí odebrat pouze Hlavní Řešitel úkolu.
+
+---
+
+### 10.11 Auditované operace a struktura protokolu
+
+Všechny bezpečnostně citlivé, správní a destruktivní operace musí být po úspěšném transakčním provedení zapsány do neměnného auditního logu.
+
+* **Katalog povinně auditovaných operací:**
+  * `TRANSFER_OWNERSHIP`: převod vlastnictví Nástěnky,
+  * `CHANGE_MANAGER`: jmenování, odvolání nebo změna Managera,
+  * `CHANGE_ROLE`: změna role člena Nástěnky,
+  * `ADD_MEMBER`: přijetí nového člena,
+  * `REMOVE_MEMBER`: odebrání člena nebo opuštění Nástěnky,
+  * `DELETE_BOARD`: logické smazání Nástěnky (soft-delete),
+  * `DELETE_TASK`: řízené trvalé smazání úkolu (controlled hard-delete),
+  * `DELETE_AREA`: řízené trvalé smazání organizační oblasti a jejích obsažených úkolů (controlled hard-delete),
+  * `ADMIN_INTERVENTION`: jakýkoliv administrativní zásah provedený globálním Adminem.
+* **Nezávislost auditní stopy na životním cyklu entit:**
+  Auditní záznamy destruktivních operací (`DELETE_TASK`, `DELETE_AREA`, `DELETE_BOARD`) se zapisují do nezávislého auditního úložiště Nástěnky. Auditní záznam **nesmí být uložen pouze jako součást mazaného objektu** a nesmí podléhat kaskádnímu odstranění při zániku entity. Záznam zůstává trvale zachován v auditní historii i po úplném fyzickém odstranění Tasku nebo Area.
+* **Minimální obsahová struktura auditního záznamu:**
+  * `actor_id`: jednoznačná identita uživatele, který operaci vyvolal,
+  * `timestamp`: přesný čas provedení operace na serveru (UTC),
+  * `board_id`: identifikace Nástěnky, v jejímž kontextu změna proběhla,
+  * `operation`: název operace (např. `DELETE_TASK`, `DELETE_AREA`, `TRANSFER_OWNERSHIP`),
+  * `target_id`: identifikace uživatele nebo entity, které se změna týká (např. ID smazaného úkolu či oblasti),
+  * `previous_state`: hodnota stavu / klíčová metadata před provedením změny (např. původní název a stav úkolu, název oblasti a počet obsažených úkolů),
+  * `new_state`: hodnota stavu po provedení změny (např. `PERMANENTLY_DELETED`),
+  * `metadata`: volitelná doplňková metadata (např. potvrzovací řetězec `SMAZAT`, důvod administrativního zásahu).
+
+> [!IMPORTANT]
+> **Audit skutečného stavu:** Auditní záznam se vytváří výhradně po úspěšném dokončení a commitu transakce. Zaznamenává reálně nastalou změnu, nikoliv pouhý pokus o operaci.
+
+---
+
+### 10.12 Atomické operace a transakční hranice
+
+Následující operace představují kritické transakční hranice systému a **musí být databázově provedeny jako jediná nedílná (atomická) operace**:
+
+1. **Vytvoření Nástěnky:**
+   * Atomicky vzniká záznam `Board` a odpovídající záznam `Membership(role = OWNER)`.
+   * Nesmí nastat stav, kdy vznikne záznam Nástěnky bez přiřazeného Ownera.
+2. **Převod vlastnictví Nástěnky:**
+   * Atomicky probíhá: povýšení Targetu na `OWNER` + odebrání vlastnictví původnímu Ownerovi + jeho převedení na `MANAGER` (nebo `MEMBER`).
+   * Zaručuje, že v žádném okamžiku neexistuje stav 0 ani 2 Ownerů.
+3. **Změna Managera Nástěnky:**
+   * Atomicky ověřuje a obsazuje pozici Managera tak, aby byla vyloučena souběžná existence dvou Managerů na téže Nástěnce.
+4. **Kritické administrativní zásahy Admina:**
+   * Zásahy Admina podléhají stejným transakčním pravidlům a integritním omezením jako běžné operace.
+5. **Řízené trvalé smazání úkolu (`DELETE_TASK`):**
+   * Atomicky probíhá: fyzické odstranění `Task` + kaskádní odstranění přiřazených účastníků (`TaskParticipant`) + zápis auditního záznamu `DELETE_TASK` do nezávislého auditního protokolu.
+   * Zaručuje, že nevzniknou žádné sirotčí vazby a auditní záznam je garantovaně uložen.
+6. **Smazání oblasti (`DELETE_AREA`):**
+   * Atomicky probíhá: ověření existence oblasti + vyhledání všech obsažených úkolů + kaskádní trvalé odstranění těchto úkolů a jejich vazeb + odstranění samotné entity `Area` + zápis auditního záznamu `DELETE_AREA` do nezávislého auditního protokolu.
+   * Zaručuje, že nevzniknou žádné sirotčí vazby, úkoly zanikají společně s oblastí podle schváleného pravidla a operace se provede buď celá, nebo vůbec.
+
+---
+
+### 10.13 API jako logický architektonický kontrakt
+
+Specifikované operace a endpointy představují **logický architektonický kontrakt** domény Nástěnka:
+* Nejsou vázány na konkrétní transportní technologii, knihovnu ani framework.
+* Každá operace definuje:
+  * svůj doménový účel,
+  * Actora a vyžadovaná oprávnění,
+  * povinné a volitelné vstupy,
+  * validační a integrační podmínky na backendu,
+  * garantovaný výsledek a návratový stav,
+  * chybové odpovědi,
+  * transakční hranice (atomicita),
+  * požadavek na zápis do auditní stopy.
+
+---
+
+### 10.14 Doménové invarianty po provedení operací
+
+Každá API operace musí zanechat systém v konzistentním stavu splňujícím následujících deset kritických invariantů:
+
+1. **Právě jeden Owner:** Každá aktivní Nástěnka má v každém okamžiku přesně jednoho platného uživatele v roli `OWNER`.
+2. **Maximálně jeden Manager:** Žádná Nástěnka nemá v žádném okamžiku více než jednoho uživatele v roli `MANAGER` (`0..1`).
+3. **Unikátnost členství:** Dvojice `(user_id, board_id)` je unikátní; jeden uživatel nemůže mít na stejné Nástěnce více členství.
+4. **Příslušnost řešitele:** `Task.assignee_id` musí být vždy aktivním členem stejné Nástěnky, do které daný úkol patří.
+5. **Příslušnost spoluřešitelů:** Každý `TaskParticipant.user_id` musí mít aktivní členství na stejné Nástěnce jako daný úkol.
+6. **Ochrana Ownera před odstraněním:** Uživatele v roli `OWNER` nelze z Nástěnky odebrat ani jeho účet deaktivovat bez předchozího převodu vlastnictví nebo administrativního zásahu Admina.
+7. **Atomicita převodu vlastnictví:** Převod vlastnictví je nedílná transakce garantující okamžitý přechod z jednoho Ownera na druhého.
+8. **Atomicita založení Nástěnky:** Nástěnka a její výchozí Owner vznikají společně v jedné transakci.
+9. **Konzistence smazané Nástěnky:** Soft-deleted Nástěnka (`deleted_at IS NOT NULL`) je nepřístupná pro běžný provoz a nepřijímá nové operace.
+10. **Oddělení rolí Nástěnky od úkolů:** Role na Nástěnce nezakládá automatickou řešitelskou odpovědnost za úkoly; správa Nástěnky a řešení úkolů zůstávají striktně autonomními vrstvami.
+
+---
+
+## 11. Stavový model úkolu
 
 Životní cyklus úkolu definuje stavy:
 
@@ -993,7 +1415,7 @@ Krok 6 je v plné a stoprocentní shodě se schváleným modelem oprávnění a 
 
 ---
 
-## 11. Archiv a trvalé mazání
+## 12. Archiv a trvalé mazání
 
 Architektura striktně odlišuje **Archivaci** od **Definitivního smazání**:
 
@@ -1004,18 +1426,20 @@ Architektura striktně odlišuje **Archivaci** od **Definitivního smazání**:
 * nenachází se na aktivní ploše Nástěnky ani v běžném přehledu dokončených úkolů.
 
 ### Trvalé smazání úkolu (`SMAZAT`)
-* představuje nevratné odstranění objektu ze systému,
+* představuje nevratné odstranění objektu ze systému (řízený hard-delete / controlled hard-delete),
 * vyžaduje bezpečnostní potvrzení vepsáním přesného textu `SMAZAT`,
-* trvale smazaný úkol není dostupný v aktivním pohledu, v archivu ani v historii změn.
+* probíhá atomicky v jediné transakci a zanechává neměnný záznam `DELETE_TASK` v nezávislém auditním logu Nástěnky,
+* trvale smazaný úkol není dostupný v aktivním pohledu, v archivu ani v běžné historii úkolu.
 
 ### Smazání oblasti
 * destruktivní organizační operace proveditelná pouze OWNEREM, MANAGEREM nebo ADMINEM,
 * vyžaduje vepsání textu `SMAZAT`,
-* **společně s oblastí se definitivně smažou také všechny úkoly, které daná oblast obsahuje** (úkoly se nepřesouvají do archivu ani koše, zanikají).
+* probíhá atomicky v jediné transakci a zanechává neměnný záznam `DELETE_AREA` v nezávislém auditním logu Nástěnky,
+* **společně s oblastí se definitivně smažou také všechny úkoly, které daná oblast obsahuje** (řízený hard-delete bez vzniku sirotčích vazeb; úkoly se nepřesouvají do archivu ani koše, zanikají).
 
 ---
 
-## 12. Historie změn a auditní stopa
+## 13. Historie změn a auditní stopa
 
 Systém udržuje neměnný chronologický záznam klíčových událostí na dvou úrovních:
 
@@ -1047,7 +1471,7 @@ Detailně specifikováno v podkapitole **8.9 Auditní stopa bezpečnostních a s
 
 ---
 
-## 13. Osobní pracovní prostor
+## 14. Osobní pracovní prostor
 
 Logická součást úkolu vyhrazená konkrétnímu uživateli:
 
@@ -1064,7 +1488,7 @@ Logická součást úkolu vyhrazená konkrétnímu uživateli:
 
 ---
 
-## 14. Týmové přílohy
+## 15. Týmové přílohy
 
 Logická součást sdíleného obsahu úkolu:
 
@@ -1076,7 +1500,7 @@ Logická součást sdíleného obsahu úkolu:
 
 ---
 
-## 15. Notifikační architektura
+## 16. Notifikační architektura
 
 Pro 1. verzi aplikace je závazný jediný prioritní notifikační tok:
 
@@ -1099,7 +1523,7 @@ Všichni členové dané Nástěnky (bez výjimky)
 
 ---
 
-## 16. Izolace Nástěnek
+## 17. Izolace Nástěnek
 
 Aplikace podporuje multi-board architekturu s přísnou datovou i procesní separací:
 
@@ -1109,7 +1533,7 @@ Aplikace podporuje multi-board architekturu s přísnou datovou i procesní sepa
 
 ---
 
-## 17. Odchod člena, deaktivace účtu a správa životního cyklu
+## 18. Odchod člena, deaktivace účtu a správa životního cyklu
 
 Architektura v souladu s datovým modelem (viz podkapitola 9.13) striktně rozlišuje tyto události:
 
@@ -1134,12 +1558,12 @@ Architektura v souladu s datovým modelem (viz podkapitola 9.13) striktně rozli
 
 ---
 
-## 18. Omezení rozsahu (Co se zatím záměrně neřeší)
+## 19. Omezení rozsahu (Co se zatím záměrně neřeší)
 
 V souladu s analytickou fází jsou následující technologická a implementační rozhodnutí **záměrně odložena do dalších fází**:
 
 * konkrétní databázový engine a SQL tabulková schémata,
-* definice API endpointů a datových struktur,
+* fyzická implementace API endpointů a technologických formátů (Step 7 definuje logický architektonický kontrakt operací),
 * volba konkrétního frontend a backend frameworku,
 * autentizační provider a mechanismus správy hesel/tokenů,
 * konkrétní WhatsApp API / integrační provider,
@@ -1151,7 +1575,7 @@ V souladu s analytickou fází jsou následující technologická a implementač
 
 ---
 
-## 19. Otevřené otázky k architektuře
+## 20. Otevřené otázky k architektuře
 
 Otázka *„Může Hlavní Řešitel odebrat Spoluřešitele?“* byla k datu 19. 9. 2026 definitivně vyřešena a uzavřena schválením **Varianty 1**:
 * Hlavní Řešitel může odebrat Spoluřešitele ze seznamu Spoluřešitelů daného úkolu.
@@ -1161,7 +1585,7 @@ V současné verzi architektury nejsou evidovány žádné další otevřené ot
 
 ---
 
-## 20. Historie verzí
+## 21. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -1169,3 +1593,4 @@ V současné verzi architektury nejsou evidovány žádné další otevřené ot
 | **0.2.0** | 19. 9. 2026 | Přidána možnost Hlavního Řešitele odebrat Spoluřešitele a explicitně potvrzeno obecné právo všech členů Nástěnky přidělovat úkoly členům dané Nástěnky. | Antigravity / Product Owner |
 | **0.3.0** | 19. 9. 2026 | Zapracován Krok 5 – Oprávnění a bezpečnostní hranice: definován model rolí (ADMIN globálně; OWNER, právě max. 1 MANAGER, MEMBER na Nástěnce), atomický převod vlastnictví, bezpečnostní pravidla a audit citlivých operací. | Antigravity / Product Owner |
 | **0.4.0** | 19. 9. 2026 | Krok 6: Datový model a vztahy – definice User, Board, Membership, Task a TaskParticipant, globální role ADMIN, role OWNER / MANAGER / MEMBER v Membership, kardinality a databázové invarianty, vztahy Task → creator / assignee / participants, oddělení role na Boardu od odpovědnosti za Task, pravidla pro převod Ownera, pravidla pro deaktivaci Usera a soft-delete Boardu. | Antigravity / Product Owner |
+| **0.5.0** | 19. 9. 2026 | Step 7: Doménové operace, API a autorizační hranice – princip autority backendu, kontext actor vs. target, logické API operace nad Board, Membership, Task a Area (včetně řízeného hard-delete Tasku a smazání oblasti), autorizační matice, nezávislý audit destruktivních operací (DELETE_TASK, DELETE_AREA), atomické transakce a doménové invarianty. | Antigravity / Product Owner |
