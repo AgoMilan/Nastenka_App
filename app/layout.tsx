@@ -3,8 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Nástěnka",
-  description:
-    "Jednoduchá týmová aplikace pro organizaci práce",
+  description: "Jednoduchá týmová aplikace pro organizaci práce",
 };
 
 export default function RootLayout({

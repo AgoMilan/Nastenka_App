@@ -17,9 +17,7 @@ export default function NotFound() {
       <h2 style={{ fontSize: "1.5rem", fontWeight: 600 }}>
         Stránka nenalezena
       </h2>
-      <p style={{ color: "#666" }}>
-        Požadovaná stránka nebo zdroj neexistuje.
-      </p>
+      <p style={{ color: "#666" }}>Požadovaná stránka nebo zdroj neexistuje.</p>
       <Link
         href="/"
         style={{

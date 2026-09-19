@@ -1,0 +1,21 @@
+# Ignoruj generované a systémové soubory
+node_modules
+.next
+out
+dist
+build
+coverage
+playwright-report
+test-results
+
+# Generované soubory Next.js
+next-env.d.ts
+
+# Lockfile – formátuje npm, ne Prettier
+package-lock.json
+
+# Projektová dokumentace a systémové soubory – zachovat původní formátování
+docs/
+.agents/
+.project/
+AGENTS.md
