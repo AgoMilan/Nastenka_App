@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 0.7.0<br>
+**Verze:** 0.8.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -2804,7 +2804,721 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 
 ---
 
-## 24. Historie verzí
+## 25. Step 10 – Doménové události, notifikace a systémové reakce
+
+Tato kapitola definuje logickou architekturu pro **doménové události, systémové reakce a notifikace uživatelů** v systému Nástěnka.
+
+Stanovuje koncepční odpověď na otázku:
+**„Co se v systému stane po významné doménové změně a kdo se o tom smí dozvědět.“**
+
+Architektura je technologicky neutrální: nestanovuje závazně konkrétní message broker, frontu, WebSocket server, SSE knihovnu ani push/e-mailového poskytovatele. Definuje logické toky, datové kontrakty, recipient policy, spolehlivost doručení, idempotenci a striktní bezpečnostní hranice.
+
+---
+
+### 25.1 API požadavek ≠ Doménová událost
+
+Architektura striktně rozlišuje mezi **záměrem klienta provést změnu** a **skutečností, že změna v doméně proběhla**:
+
+* **API operace (Požadavek / Command):**
+  * Vyjadřuje úmysl: *„Uživatel / klient žádá systém o provedení operace.“*
+  * Příklad: `POST /tasks` (žádost o vytvoření úkolu).
+  * API požadavek může kdykoliv selhat – na autentizaci, autorizaci, validačních pravidlech, doménových constraintech či při pádu databázové transakce.
+* **Doménová událost (Domain Event):**
+  * Vyjadřuje nezvratný fakt: *„V systému úspěšně proběhla významná doménová změna.“*
+  * Příklad: `TASK_CREATED` (úkol byl vytvořen a trvale uložen).
+
+#### Závazný princip vzniku události
+> [!IMPORTANT]
+> **Doménová událost nesmí nikdy vzniknout pouhým přijetím API požadavku.**
+> Událost se stává publikovatelnou VÝHRADNĚ po úspěšném a úplném dokončení databázové transakce (COMMIT).
+> Pokud databázová transakce selže nebo dojde k rollbacku, žádná doménová událost nesmí být publikována a systém se nesmí tvářit, že ke změně došlo.
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                   Klient odešle request                │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│   Autentizace (Kdo jsi?) & Autorizace (Smíš to?)       │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│         Doménová validace & Business pravidla          │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                 Databázová transakce                   │
+└───────────────────────────┬────────────────────────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              ▼                           ▼
+        [COMMIT: ÚSPĚCH]            [ROLLBACK: CHYBA]
+              │                           │
+              ▼                           ▼
+┌───────────────────────────┐    ┌───────────────────────────┐
+│ Vzniká Domain Event       │    │ ŽÁDNÁ událost nevzniká!   │
+│ (publikovatelná událost)  │    │ Vrácena chybová odpověď   │
+└───────────────────────────┘    └───────────────────────────┘
+```
+
+---
+
+### 25.2 Rozlišení konceptů: Doménová událost vs. AuditLog vs. Notifikace
+
+Jedna doménová operace může v systému vyvolat paralelní reakce v různých vrstvách. Tyto mechanismy však plní zcela odlišné funkce a nesmí být vzájemně zaměňovány:
+
+| Koncept | Primární účel | Příjemce / Cíl | Životní cyklus a persistence |
+|---|---|---|---|
+| **Domain Event** | Sděluje: *„V doméně nastala událost X.“* | Systémové komponenty, asynchronní handlery, notifikační procesor. | Provozní zpráva. Po úspěšné distribuci a zpracování může být archivována či rotována. |
+| **AuditLog** | Sděluje: *„Kdo (Actor), kdy, jakou operaci provedl a jaký byl původní a nový stav.“* | Bezpečnostní dohled, compliance, administrátoři. | Neměnný append-only záznam. Zůstává trvale uložen nezávisle na smazání objektu. |
+| **Notification** | Sděluje: *„Uživateli Y se oznamuje zpráva Z.“* | Konkrétní člověk (koncový uživatel systému). | Osobní stavový záznam (`UNREAD` / `READ`). Může být uživatelem smazán bez vlivu na doménu. |
+
+Příklad: Operace `TRANSFER_OWNERSHIP` (převod vlastnictví Nástěnky):
+1. Zapíše do databáze změnu Ownera v tabulce `Membership` (doménový stav).
+2. Zapíše neměnný záznam `TRANSFER_OWNERSHIP` do tabulky `AuditLog` (bezpečnostní audit).
+3. Publikuje doménovou událost `OWNERSHIP_TRANSFERRED` (systémová reakce).
+4. Na základě události vzniknou 2 osobní notifikace: pro nového Ownera a pro původního Ownera.
+
+---
+
+### 25.3 Taxonomie doménových událostí
+
+Systém Nástěnka definuje uzavřenou taxonomii doménových událostí reprezentujících významné změny stavu v souladu s dosud schválenou architekturou:
+
+#### 1. Události Nástěnky (Board Events)
+* `BOARD_CREATED`: Byla vytvořena nová Nástěnka a její výchozí Owner.
+* `BOARD_UPDATED`: Byly upraveny metadata Nástěnky (název, popis).
+* `BOARD_DELETED`: Nástěnka byla logicky smazána (soft-delete).
+
+#### 2. Události členství (Membership Events)
+* `MEMBER_ADDED`: Do Nástěnky byl zařazen nový člen.
+* `MEMBER_REMOVED`: Člen byl odebrán z Nástěnky (nebo sám Nástěnku opustil).
+* `MEMBER_ROLE_CHANGED`: Členovi byla změněna role na Nástěnce (`MEMBER ↔ MANAGER`).
+* `OWNERSHIP_TRANSFERRED`: Vlastnictví Nástěnky bylo atomicky převedeno na jiného člena (`OWNER`).
+
+#### 3. Události úkolů (Task Events)
+* `TASK_CREATED`: Na Nástěnce vznikl nový úkol.
+* `TASK_UPDATED`: Byly změněny atributy úkolu (název, popis, termín, priorita, oblast).
+* `TASK_ASSIGNED`: Úkol získal nového Hlavního Řešitele (převzetím či přidělením).
+* `TASK_UNASSIGNED`: Úkol ztratil Hlavního Řešitele a přešel do stavu `Nepřiřazeno`.
+* `TASK_COMPLETED`: Úkol byl přepnut do stavu `HOTOVO`.
+* `TASK_REOPENED`: Dokončený úkol byl vrácen zpět do řešení.
+* `TASK_PARTICIPANT_ADDED`: K úkolu se připojil (nebo byl přiřazen) nový Spoluřešitel.
+* `TASK_PARTICIPANT_REMOVED`: Spoluřešitel byl od úkolu odpojen (nebo odebrán Hlavním Řešitelem).
+* `TASK_DELETED`: Úkol byl řízeným způsobem trvale odstraněn ze systému (`SMAZAT`).
+
+#### 4. Události oblastí (Area Events)
+* `AREA_DELETED`: Byla smazána oblast včetně všech v ní obsažených úkolů (`SMAZAT`).
+
+#### 5. Události uživatelského účtu (User Events)
+* `USER_DEACTIVATED`: Uživatelský účet byl zablokován / deaktivován (`is_active = false`).
+
+#### Striktní oddělení od Security Events
+Události autentizačního subsystému (např. `LOGIN_SUCCESS`, `LOGIN_FAILURE`, `LOGOUT`, `SESSION_REVOKED`, `PASSWORD_CHANGED`, `PASSWORD_RECOVERY_COMPLETED`) definované ve Step 9 představují **Security Events**. Nejsou doménovými událostmi Nástěnky, nevstupují do notifikačního toku Nástěnky a slouží výhradně bezpečnostnímu auditu.
+
+---
+
+### 25.4 Vznik události a transakční hranice
+
+V návaznosti na transakční pravidla z kapitoly 11 (Step 8) platí pro publikaci událostí striktní posloupnost:
+
+```text
+Začátek transakce (BEGIN TRANSACTION)
+          │
+          ▼
+Provedení doménových změn (INSERT / UPDATE / DELETE)
+          │
+          ▼
+Zápis do AuditLogu (pokud operace vyžaduje audit)
+          │
+          ▼
+Kryptografická příprava záznamu události
+          │
+          ▼
+Potvrzení transakce (COMMIT)
+          │
+          ▼
+Událost se stává PUBLIKOVATELNOU (Publishable Event)
+```
+
+Pro kritické atomické operace:
+* `CREATE_BOARD`,
+* `TRANSFER_OWNERSHIP`,
+* `CHANGE_MANAGER`,
+* `ADD_MEMBER`,
+* `REMOVE_MEMBER`,
+* `CHANGE_ROLE`,
+* `ASSIGN_TASK`,
+* `ADD_TASK_PARTICIPANT`,
+* `DELETE_TASK`,
+* `DELETE_AREA`,
+* `DELETE_BOARD`,
+
+musí být zaručeno, že **událost nikdy nepředbíhá commit**. Pokud transakce z jakéhokoliv důvodu selže, událost nesmí být vypuštěna do distribuční vrstvy.
+
+---
+
+### 25.5 Spolehlivé publikování událostí (Reliable Event Publication)
+
+Architektura řeší fundamentální problém distribuovaných systémů:
+*„Co se stane, když databázový commit projde, ale následné odeslání události do notifikačního subsystému či zprostředkovatele selže?“*
+
+#### Architektonický princip Outbox
+Pro zajištění spolehlivosti systém aplikuje architektonický vzor **Transactional Outbox** (na logické úrovni):
+
+1. **Atomické uložení s doménovou změnou:** Záznam o vzniklé události je trvale uložen v databázi v rámci **téže databázové transakce** jako samotná změna doménových entit.
+2. **Nezávislost na dostupnosti transportu:** Selhání sítě, pád e-mailového provideru ani výpadek WebSocket serveru nemůže způsobit ztrátu události ani rollback již potvrzené doménové změny.
+3. **Garance At-Least-Once Delivery:** Jakmile je transakce potvrzena, asynchronní distribuční mechanismus garantuje, že událost bude doručena notifikačnímu subsystému minimálně jednou.
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                   DATABÁZOVÁ TRANSAKCE                 │
+│                                                        │
+│  ┌───────────────────────┐  ┌───────────────────────┐  │
+│  │  Doménová tabulka     │  │  Transactional Outbox │  │
+│  │  (např. Task.status)  │  │  (uložená událost)    │  │
+│  └───────────────────────┘  └───────────────────────┘  │
+│                                                        │
+└───────────────────────────┬────────────────────────────┘
+                            │ COMMIT
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│           Asynchronní Event Dispatcher / Worker        │
+└─────────────┬───────────────────────────┬──────────────┘
+              │                           │
+              ▼                           ▼
+   ┌──────────────────────┐    ┌──────────────────────┐
+   │ Generování In-App    │    │ Odeslání Real-Time / │
+   │ Notifikací           │    │ Asynchronní transport│
+   └──────────────────────┘    └──────────────────────┘
+```
+
+---
+
+### 25.6 Idempotence a ochrana proti duplicitám
+
+Protože asynchronní distribuce událostí pracuje na principu *at-least-once* (garance minimálně jednoho doručení), může v důsledku síťových chyb, retry mechanismů či restartu služeb dojít k opakovanému doručení téže události.
+
+Architektura striktně rozlišuje:
+* **Unique Event (Jedinečná událost):** Unikátní doménová skutečnost identifikovaná stabilním `event_id`.
+* **Delivery Attempt (Pokus o doručení):** Technické předání téže události ke zpracování.
+
+#### Zásada idempotentního zpracování
+Každý příjemce a zpracovatel událostí (zejména generátor notifikací) musí být **idempotentní**:
+1. Opakované doručení události se stejným `event_id` nesmí vytvořit duplicitní uživatelskou notifikaci.
+2. Systém sleduje již zpracovaná `event_id` pro daného příjemce.
+3. Pokud již byla pro danou dvojici `(event_id, recipient_user_id)` notifikace vygenerována, další pokus o zpracování je tiše a bezpečně ignorován.
+
+---
+
+### 25.7 Struktura Domain Event (Datový kontrakt události)
+
+Logická doménová událost nese minimální standardizovanou sadu atributů:
+
+```text
+DomainEvent {
+    event_id        : UUID / String (unikátní kryptografický identifikátor),
+    event_type      : String (např. 'TASK_ASSIGNED'),
+    occurred_at     : Timestamp (autoritativní čas vzniku v UTC na serveru),
+    actor_user_id   : User.id (ověřená identita původce akce ze serverové session),
+    board_id        : Board.id (ID Nástěnky, nullable pro systémové události),
+    target_type     : String ('Task' | 'Board' | 'Membership' | 'Area' | 'User'),
+    target_id       : String / Integer (ID dotčené entity),
+    payload         : Object (specifická minimalistická data události),
+    correlation_id  : String (trasovací ID celého byznys toku / requestu),
+    causation_id    : String (ID bezprostředního impulzu, např. request_id)
+}
+```
+
+#### Bezpečnostní zásada pro event payload
+* Payload obsahuje výhradně **data nezbytná pro vyhodnocení reakce a sestavení textu notifikace** (např. název úkolu, nově nastavený stav, jméno řešitele).
+* Payload **nesmí obsahovat kompletní dump objektu** ani skrytá/soukromá data.
+* Payload **nikdy nesmí obsahovat citlivá autentizační data** (hesla, tokeny, session secrets) ani soukromé poznámky z osobního pracovního prostoru úkolu.
+
+---
+
+### 25.8 Rozlišení Actor vs. Target v událostech
+
+V návaznosti na Step 7 a Step 9 systém důsledně odděluje:
+* **Actor (`actor_user_id`):** Uživatel, který akci fyzicky provedl (původce). Získán výhradně ze serverové session.
+* **Target (`target_id` / `target_user_id`):** Subjekt nebo uživatel, jehož se akce týká (cíl).
+
+#### Příklad:
+Milan (`actor_user_id = 10`) přiřadí úkol Janovi (`target_user_id = 25`):
+```text
+event_type     : 'TASK_ASSIGNED'
+actor_user_id  : 10 (Milan)
+board_id       : 1
+target_type    : 'Task'
+target_id      : 101
+payload: {
+    assignee_user_id : 25 (Jan),
+    previous_assignee: null,
+    task_title       : 'Oprava elektroinstalace'
+}
+```
+Zde je `actor ≠ target`. Záměna těchto rolí v notifikačním systému je přísně vyloučena.
+
+---
+
+### 25.9 Pravidla pro určení příjemců (Recipient Determination Policy)
+
+Příjemci notifikací se **nikdy neurčují plošně na základě globální ani lokální role** (např. neexistuje pravidlo *„Manager vidí každou notifikaci“*).
+
+Příjemce je vždy determinován **specifickou politikou pro daný typ události (Event-Specific Recipient Policy)**:
+
+| Doménová událost | Primární příjemci (Recipient Policy) |
+|---|---|
+| `TASK_ASSIGNED` | Nový Hlavní Řešitel (`assignee_user_id`). |
+| `TASK_UNASSIGNED` | Předchozí Hlavní Řešitel (byl-li odebrán jiným uživatelem). |
+| `TASK_PARTICIPANT_ADDED` | Nově připojený / přiřazený Spoluřešitel. |
+| `TASK_PARTICIPANT_REMOVED` | Odebraný Spoluřešitel (pokud byl odebrán Hlavním Řešitelem). |
+| `TASK_COMPLETED` | Autor úkolu (`created_by`), případně Spoluřešitelé (pokud úkol dokončil někdo jiný). |
+| `TASK_REOPENED` | Hlavní Řešitel a Spoluřešitelé daného úkolu. |
+| `TASK_DELETED` | Hlavní Řešitel a autor úkolu (pokud úkol smazal Manager/Owner/Admin). |
+| `MEMBER_ADDED` | Nově přidaný uživatel (informace o vstupu na Nástěnku). |
+| `MEMBER_REMOVED` | Odebraný uživatel (informace o odebrání z Nástěnky). |
+| `MEMBER_ROLE_CHANGED` | Dotčený uživatel, kterému byla role změněna. |
+| `OWNERSHIP_TRANSFERRED` | Nový OWNER i původní OWNER. |
+
+---
+
+### 25.10 Vlastní akce Actora (Pravidlo potlačení self-notifikace)
+
+Základní ergonomické a systémové pravidlo notifikačního subsystému zní:
+
+> [!NOTE]
+> **Samotný Actor běžně nedostává notifikaci o operaci, kterou sám vyvolal.**
+
+Pokud Milan přiřadí úkol Milanovi (`actor_user_id = Milan`, `target_user_id = Milan`), recipient policy potlačí vytvoření notifikace pro Milana. Uživatel o svém vlastním kroku ví přímo z interakce s aplikací; generování notifikace pro sebe samého by způsobovalo nežádoucí zahlcení uživatelského rozhraní.
+
+Výjimkou mohou být pouze explicitní bezpečnostní potvrzení (např. potvrzení o změně hesla zaslané e-mailem), která však spadají pod Security Events.
+
+---
+
+### 25.11 Typy a kanály notifikací
+
+Architektura počítá se čtyřmi logickými notifikačními kanály:
+
+1. **In-App Notification (Centrum notifikací v aplikaci):**
+   * Základní a prioritní kanál systému Nástěnka.
+   * Ukládá se do osobního notifikačního seznamu uživatele v databázi.
+   * Uživatel vidí přehled nepřečtených a přečtených oznámení (ikona zvonečku, seznam).
+2. **Real-Time Notification (Okamžitá aktualizace otevřeného UI):**
+   * Okamžité doručení informace do právě otevřené klientské relace uživatele.
+   * Slouží k dynamické aktualizaci dat na obrazovce (např. změna stavu úkolu na ploše Nástěnky) bez nutnosti ručního obnovení stránky (F5).
+3. **E-mail Notification (E-mailové zprávy):**
+   * Asynchronní doručování souhrnů či důležitých zpráv na ověřený e-mail uživatele.
+   * Plánováno jako volitelné rozšíření podle preferencí uživatele.
+4. **Push Notification (Mobilní / Webové push notifikace):**
+   * Asynchronní oznámení na mobilní zařízení či do prohlížeče (např. v rámci budoucího PWA režimu).
+
+Konkrétní síťové technologie (WebSocket, Server-Sent Events, WebPush API, SMTP brána) jsou technologicky neutrální a budou vybrány v implementační fázi.
+
+---
+
+### 25.12 Logický datový model entity Notification (In-App)
+
+Osobní notifikace je logicky reprezentována entitou s následující strukturou:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                      NOTIFICATION                      │
+├────────────────────────────────────────────────────────┤
+│ id                : UUID / Integer (PK)                │
+│ recipient_user_id : FK -> User.id (příjemce)           │
+│ event_id          : UUID / String (reference na Event) │
+│ type              : String (např. 'TASK_ASSIGNED')     │
+│ title             : String (krátký titulek zprávy)     │
+│ message           : Text (srozumitelný popis události) │
+│ created_at        : Timestamp                          │
+│ read_at           : Timestamp (nullable)               │
+│ expires_at        : Timestamp (nullable, pro expiraci) │
+└────────────────────────────────────────────────────────┘
+```
+
+#### Význam stavu přečtení
+* `read_at IS NULL`: Notifikace je **nepřečtená** (indikována v UI jako nová).
+* `read_at IS NOT NULL`: Notifikace byla uživatelem **přečtena** (časové razítko zaznamenává okamžik přečtení).
+
+---
+
+### 25.13 Kardinalita: Notification ≠ Event (1:N vztah)
+
+Mezi doménovou událostí a uživatelskou notifikací existuje vztah **1 : 0..N**:
+
+```text
+                             ┌───────────────────────────────┐
+                             │          DomainEvent          │
+                             └───────────────┬───────────────┘
+                                             │ 1
+                                             │
+                                             ▼ 0..N
+                             ┌───────────────────────────────┐
+                             │         Notification          │
+                             └───────────────────────────────┘
+```
+
+* **0 notifikací:** Událost nemá v daném kontextu žádného externího příjemce (např. úkol byl přiřazen samému sobě a self-notifikace byla potlačena, nebo jde o čistě technickou organizační změnu).
+* **1 notifikace:** Událost se týká jednoho příjemce (např. `TASK_ASSIGNED` vytvoří notifikaci pro nového řešitele).
+* **N notifikací:** Událost se týká více osob (např. `OWNERSHIP_TRANSFERRED` vytvoří notifikaci pro nového i starého Ownera).
+
+Každá instance `Notification` náleží **právě jednomu konkrétnímu příjemci (`recipient_user_id`)**. Neexistují žádné „sdílené týmové notifikace“.
+
+---
+
+### 25.14 Životní cyklus notifikace
+
+Jednotlivá notifikace prochází jednoduchým a deterministickým životním cyklem:
+
+```text
+┌────────────────────────┐
+│        CREATED         │ ◄── Vygenerováno na základě DomainEvent
+└───────────┬────────────┘
+            │
+            ▼
+┌────────────────────────┐
+│         UNREAD         │ ◄── read_at IS NULL (zobrazuje se jako nová)
+└───────────┬────────────┘
+            │
+            │ Uživatel označí jako přečtené (PATCH /read nebo /read-all)
+            ▼
+┌────────────────────────┐
+│          READ          │ ◄── read_at = Timestamp
+└───────────┬────────────┘
+            │
+            │ Uplynutí retenční doby (expires_at) nebo smazání uživatelem
+            ▼
+┌────────────────────────┐
+│        DELETED         │ ◄── Odstraněno z databáze (bez vlivu na doménu)
+└────────────────────────┘
+```
+
+---
+
+### 25.15 Notifikace a soukromý prostor uživatele
+
+V souladu s principem soukromí a osobního pracovního prostoru (kapitola 15) platí:
+
+1. **Výhradní osobní vlastnictví:** Notifikace jsou osobními daty uživatele (`recipient_user_id`).
+2. **Přísná izolace uživatelů:** Uživatel vidí výhradně a pouze své vlastní notifikace.
+3. **Zákaz nahlížení jinými členy:** Žádný jiný člen Nástěnky (včetně rolí `MANAGER` a `OWNER`) nesmí mít přístup k osobním notifikacím jiného uživatele.
+4. **Ochrana před globálním ADMINEM:** Globální role `ADMIN` nemá z titulu své funkce žádné oprávnění zobrazovat obsah osobních notifikací jiných uživatelů. Notifikace neslouží jako auditní nástroj; pro dohled slouží výhradně `AuditLog`.
+
+---
+
+### 25.16 Ochrana proti úniku informací v notifikacích
+
+Notifikační systém nesmí být zneužit jako vektor pro únik dat:
+
+* **Respektování hranic Nástěnek:** Notifikace nesmí zpřístupnit data z Nástěnky uživateli, který není jejím členem (ochrana multi-board izolace dle kapitoly 18).
+* **Zákaz úniku soukromých poznámek:** Notifikace k úkolu nesmí nikdy obsahovat soukromé poznámky, checklisty ani náčrtky z osobního pracovního prostoru řešitele.
+* **Časová validace členství:** Před doručením notifikace musí recipient policy ověřit aktuální stav členství. Pokud uživatel mezi vznikem události a odesláním notifikace Nástěnku opustil, notifikace mu nesmí být doručena.
+
+---
+
+### 25.17 Vliv změn Membership na notifikace
+
+Při událostech spojených se změnou členství platí:
+* `MEMBER_ADDED`: Uživatel obdrží notifikaci o zařazení na Nástěnku.
+* `MEMBER_REMOVED`: Uživatel může obdržet notifikaci o tom, že jeho členství bylo ukončeno. **Tímto okamžikem však definitivně zaniká jeho právo přijímat jakékoliv další notifikace z dané Nástěnky.**
+* `MEMBER_ROLE_CHANGED`: Uživatel obdrží oznámení o změně své role (`MEMBER ↔ MANAGER`).
+* `OWNERSHIP_TRANSFERRED`: Původní i nový vlastník obdrží oznámení o převodu vlastnictví Nástěnky.
+
+**Historický audit a aktuální notifikační oprávnění nejsou totéž:** I když auditní stopa navždy eviduje, že uživatel byl v minulosti řešitelem či členem, notifikace o novém dění jsou doručovány výhradně aktuálním oprávněným členům.
+
+---
+
+### 25.18 Notifikační scénáře pro Task
+
+| Událost | Popis scénáře a pravidla doručení |
+|---|---|
+| `TASK_CREATED` | Podle schválené notifikační architektury (kapitola 17) vzniká notifikace pro členy dané Nástěnky. |
+| `TASK_ASSIGNED` | Notifikaci obdrží nově přiřazený Hlavní Řešitel (`assignee_user_id`), pokud akci neprovedl sám sobě. |
+| `TASK_UNASSIGNED` | Notifikaci může obdržet původní řešitel, byl-li odebrán jiným uživatelem. |
+| `TASK_PARTICIPANT_ADDED` | Notifikaci obdrží nově přidaný Spoluřešitel (není-li sám aktérem). |
+| `TASK_PARTICIPANT_REMOVED` | Notifikaci obdrží odebraný Spoluřešitel, byl-li odebrán Hlavním Řešitelem. |
+| `TASK_COMPLETED` | Notifikaci obdrží autor úkolu (`created_by`), případně další řešitelé, pokud úkol dokončil jiný člen. |
+| `TASK_REOPENED` | Notifikaci obdrží Hlavní Řešitel a Spoluřešitelé jako výzvu k obnovení práce. |
+| `TASK_DELETED` | **Zvláštní opatrnost:** Cílový úkol již fyzicky neexistuje (řízený hard-delete). Notifikace nesmí odkazovat na neexistující entitu; nese pouze bezpečný textový záznam z payloadu (název úkolu, Nástěnka, kdo smazal). |
+
+---
+
+### 25.19 Notifikační scénáře pro Membership a Board
+
+* **Přidání člena (`MEMBER_ADDED`):** Informuje nového člena o přístupu k Nástěnce. Ostatní členové nejsou plošně notifikováni, aby nedocházelo k informačnímu šumu.
+* **Odebrání člena (`MEMBER_REMOVED`):** Informuje odebraného člena o zrušení členství.
+* **Změna role (`MEMBER_ROLE_CHANGED`):** Informuje dotčeného uživatele o nabytí či pozbytí role `MANAGER`.
+* **Převod vlastnictví (`OWNERSHIP_TRANSFERRED`):** Informuje nového Ownera o převzetí plné odpovědnosti a starého Ownera o přechodu do role běžného člena (`MEMBER`).
+* **Smazání Nástěnky (`BOARD_DELETED`):** Může informovat členy Nástěnky o jejím zrušení.
+
+---
+
+### 25.20 Schéma vztahů: Event / Notification / AuditLog
+
+Následující schéma znázorňuje kompletní architekturu toku od klientského požadavku přes atomickou transakci až po paralelní větve bezpečnostního auditu a notifikací:
+
+```text
+                     Klientský API Požadavek (Command)
+                                   │
+                                   ▼
+                       Ověření identity & oprávnění
+                                   │
+                                   ▼
+                       Doménová operace (Service)
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                    DATABÁZOVÁ TRANSAKCE (ATOMIC)                     │
+│                                                                      │
+│  1. Změna doménových dat (Task, Board, Membership, Area)             │
+│  2. Zápis do AuditLogu (Auditní záznam – neměnný, trvalý)            │
+│  3. Zápis do Transactional Outboxu (Příprava Domain Event)           │
+│                                                                      │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │
+                                   ▼ COMMIT
+                                   │
+                     Událost úspěšně publikována
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      DOMAIN EVENT DISPATCHER                         │
+│                                                                      │
+│  Event ID, Event Type, Actor, Target, Occurred At, Minimal Payload   │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                   RECIPIENT DETERMINATION POLICY                     │
+│                                                                      │
+│  - Vyhodnocení typu události                                         │
+│  - Potlačení self-notifikace pro Actora                              │
+│  - Kontrola aktuálního členství a soukromí                           │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │
+               ┌───────────────────┴───────────────────┐
+               ▼                                       ▼
+    0..N In-App Notifikací                  Asynchronní kanály
+  (tabulka Notification pro příjemce)    (Real-time push, e-mail)
+```
+
+#### Klíčové oddělení:
+* `AuditLog ≠ Domain Event`: AuditLog je právní a bezpečnostní kronika; Domain Event je provozní signál.
+* `Domain Event ≠ Notification`: Domain Event je systémová zpráva o změně; Notification je osobní sdělení člověku.
+* `Notification ≠ API Response`: API Response informuje volajícího o výsledku jeho požadavku; Notification informuje ostatní dotčené příjemce asynchronně.
+
+---
+
+### 25.21 Synchronní vs. asynchronní systémové reakce
+
+Systémové reakce jsou striktně rozděleny na dvě fáze:
+
+#### Synchronní reakce (součást hlavní transakce před commit)
+Musí být dokončeny okamžitě jako podmínka úspěchu operace:
+1. Validace integrity a oprávnění.
+2. Zápis doménových změn do databáze.
+3. Povinný zápis do `AuditLogu` u bezpečnostních a kritických operací.
+4. Uložení události do Outboxu.
+
+#### Asynchronní reakce (po úspěšném commitu)
+Probíhají na pozadí a nesmí blokovat klienta:
+1. Zpracování recipient policy a vytvoření záznamů v tabulce `Notification`.
+2. Odeslání zpráv přes externí poskytovatele (e-mail, push, WhatsApp).
+3. Real-time websocket/SSE broadcast na připojené klienty.
+
+#### Zásada nezávislosti domény
+> [!CAUTION]
+> **Selhání asynchronní notifikace nesmí nikdy způsobit rollback již potvrzené doménové změny.**
+> Pokud selže odeslání e-mailu, push notifikace nebo pád websocketového spojení, doménová operace (např. převzetí úkolu, vytvoření úkolu) zůstává 100% platná a potvrzená.
+
+---
+
+### 25.22 Chování při chybách a strategie Retry
+
+Pokud selže asynchronní zpracování nebo doručení notifikace:
+
+```text
+Doménová operace: ÚSPĚCH (COMMIT)
+        │
+        ▼
+Doručení notifikace: SELHÁNÍ (Timeout / Síťová chyba)
+        │
+        ▼
+   [NESMÍ NASTAT ROLLBACK DOMÉNY!]
+        │
+        ▼
+Opakování doručení (Retry s exponenciálním zpožděním)
+        │
+        ▼
+Při trvalém selhání: Záznam do Dead-Letter / Error logu pro správce
+```
+
+* **Retry s exponenciálním zpožděním (Exponential Backoff):** Dočasné výpadky transportu jsou řešeny opakovanými pokusy.
+* **Deduplikace při retry:** Díky unikátnímu `event_id` a idempotenci zpracovatelů nezpůsobí opakovaný pokus duplicitní notifikaci příjemci, který ji již obdržel.
+
+---
+
+### 25.23 Časování, pořadí a kauzalita událostí
+
+1. **Autoritativní čas serveru:** Časové razítko `occurred_at` je generováno výhradně serverem v UTC. Čas klienta je považován za nedůvěryhodný.
+2. **Kauzální návaznost (Correlation & Causation):**
+   * `correlation_id`: Provazuje všechny události a logy vzniklé v rámci jednoho uceleného požadavku.
+   * `causation_id`: Identifikuje bezprostřední příčinu události (např. ID příchozího API požadavku).
+3. **Objektové pořadí:** V rámci jednoho objektu (např. životní cyklus jednoho Tasku) jsou události řazeny sekvenčně podle serverového času a transakčního pořadí.
+
+---
+
+### 25.24 Bezpečnost událostí (Event Security)
+
+* **Minimalizace dat:** Payload události obsahuje pouze minimální nutnou sadu atributů pro notifikační účely.
+* **Absolutní zákaz tajemství v payloadu:** Payload nesmí za žádných okolností obsahovat hesla, hashe hesel, session tokeny, jednorázové recovery tokeny ani privátní šifrovací klíče.
+* **Ochrana soukromí:** Osobní pracovní poznámky řešitele se do doménových událostí ani notifikací nepřenášejí.
+
+---
+
+### 25.25 Retence a životní cyklus událostí (Event Retention)
+
+Architektura odděluje životní cyklus dat:
+* **Provozní události (Outbox / Event queue):** Po úspěšném zpracování a vygenerování notifikací mohou být po uplynutí krátké retenční doby (např. 7–30 dní) z provozních tabulek promazány či rotovány.
+* **Auditní záznamy (`AuditLog`):** Podléhají dlouhodobé archivační politice a nemažou se společně s provozními událostmi.
+* **In-app notifikace (`Notification`):** Zůstávají v osobním seznamu uživatele, dokud je uživatel nesmaže, nebo do vypršení stanovené expirace (`expires_at`, např. 90 dní).
+
+---
+
+### 25.26 Notifikační uživatelské preference
+
+Architektura definuje koncepční rámec pro budoucí konfiguraci uživatelských preferencí:
+* možnost volby kanálů (např. In-app vždy, e-mail pouze pro důležité, push pro přiřazení),
+* tichý režim (Quiet Hours) pro mobilní a externí kanály,
+* filtrace typů událostí podle zájmu uživatele.
+
+#### Závazná bezpečnostní zásada:
+> [!IMPORTANT]
+> **Kritická systémová a bezpečnostní oznámení nelze uživatelsky potlačit.**
+> Informace o odebrání z Nástěnky, deaktivaci účtu či bezpečnostních incidentech jsou doručovány vždy bez ohledu na volitelné preference.
+
+---
+
+### 25.27 API kontrakt pro notifikace
+
+Architektonický kontrakt definuje následující logické endpointy pro správu osobních notifikací:
+
+#### 1. Získání notifikací uživatele (`GET /notifications`)
+* **Účel:** Načtení seznamu osobních notifikací přihlášeného uživatele.
+* **Volající:** Přihlášený uživatel (`actor_user_id`).
+* **Parametry (volitelné):** `unread_only=true`, stránkování (`limit`, `offset`).
+* **Autorizace:** Server vrací VÝHRADNĚ záznamy, kde `recipient_user_id == actor_user_id`.
+* **Typické chyby:** `401 Unauthorized` (nepřihlášen).
+
+#### 2. Označení notifikace jako přečtené (`PATCH /notifications/{notificationId}/read`)
+* **Účel:** Změna stavu konkrétní notifikace na přečtenou.
+* **Volající:** Vlastník notifikace.
+* **Autorizace:** Backend ověří, že notifikace existuje a náleží volajícímu (`recipient_user_id == actor_user_id`).
+* **Výsledek:** Nastavení `read_at = NOW()`.
+* **Typické chyby:** `401 Unauthorized`, `404 Not Found` / `403 Forbidden` (notifikace neexistuje nebo patří jinému uživateli).
+
+#### 3. Hromadné označení všech notifikací jako přečtených (`POST /notifications/read-all`)
+* **Účel:** Označení všech nepřečtených notifikací volajícího uživatele jako přečtených.
+* **Volající:** Přihlášený uživatel.
+* **Výsledek:** Nastavení `read_at = NOW()` pro všechny záznamy daného `recipient_user_id`, kde bylo `read_at IS NULL`.
+* **Typické chyby:** `401 Unauthorized`.
+
+#### 4. Smazání notifikace (`DELETE /notifications/{notificationId}` – volitelný endpoint)
+* **Účel:** Odstranění přečtené či nepotřebné notifikace z osobního seznamu uživatele.
+* **Volající:** Vlastník notifikace.
+* **Autorizace:** Povoleno pouze pro záznamy, kde `recipient_user_id == actor_user_id`.
+* **Výsledek:** Smazání záznamu z tabulky `Notification` (nemá žádný vliv na původní `DomainEvent` ani na doménový stav úkolů/Nástěnek).
+* **Typické chyby:** `401 Unauthorized`, `403 Forbidden` / `404 Not Found`.
+
+---
+
+### 25.28 Autorizační hranice notifikací
+
+Při jakékoliv práci s notifikačním API backend nekompromisně ověřuje:
+1. **Identitu Actora:** Zjištěna ze zvalidované serverové session (`actor_user_id`).
+2. **Vlastnictví notifikace:** Actor smí číst a upravovat výhradně notifikace, jejichž je přímým příjemcem (`recipient_user_id`).
+3. **Zákaz manipulace s parametry:** Klient nesmí mít možnost změnou `notification_id`, `recipient_user_id` ani `board_id` nahlížet do notifikací jiných členů týmu či cizích Nástěnek.
+
+---
+
+### 25.29 Konceptuální datový návrh entity Notification
+
+```text
+Tabulka: Notification
+─────────────────────────────────────────────────────────────────────────────
+id                 UUID / BigInt    PK, not null
+recipient_user_id  UUID / BigInt    FK -> User.id, not null, on delete cascade
+event_id           UUID / String    not null, indexováno
+type               Varchar(64)      not null (např. 'TASK_ASSIGNED')
+title              Varchar(255)     not null
+message            Text             not null
+created_at         Timestamp        not null, default now()
+read_at            Timestamp        nullable
+expires_at         Timestamp        nullable
+─────────────────────────────────────────────────────────────────────────────
+Indexy a constrainty:
+- INDEX idx_notifications_recipient_unread (recipient_user_id, read_at)
+- UNIQUE (recipient_user_id, event_id, type) -- ochrana proti duplicitám
+```
+
+---
+
+### 25.30 Integrita mezi Event a Notification
+
+Architektura garantuje následující integritní pravidla:
+1. **Nezávislost domény:** Notifikace je odvozený pohled na událost; její vytvoření, přečtení či smazání nezpětně neovlivňuje stav úkolu, Nástěnky ani historii v `AuditLogu`.
+2. **Jednoznačná vazba příjemce:** Každá notifikace má přesně jednoho příjemce.
+3. **Sledovatelnost původu:** Každá notifikace nese odkaz na původní `event_id`, což umožňuje přesné trasování a spolehlivou deduplikaci.
+
+---
+
+### 25.31 Bezpečnostní invarianty Step 10
+
+Architektura událostí a notifikací závazně garantuje dodržení následujících osmnácti invariantů:
+
+1. **Vznik události po úspěchu:** Doménová událost vzniká výhradně po úspěšném provedení operace a commmitu transakce.
+2. **Zákaz publikace při chybě:** Neúspěšná transakce nesmí nikdy publikovat potvrzenou doménovou událost.
+3. **Oddělení Domain Event od AuditLogu:** Doménová událost není totožná s auditním záznamem; slouží odlišným účelům a má jiný životní cyklus.
+4. **Oddělení Domain Event od Notifikace:** Doménová událost vyjadřuje systémovou změnu, nikoliv samotné osobní sdělení uživateli.
+5. **API požadavek není událost:** Příchozí API request reprezentuje pouhý záměr klienta, nikoliv potvrzenou událost.
+6. **Jednoznačnost události:** Každá doménová událost má unikátní a stabilní `event_id`.
+7. **Autorita serveru nad Actor:** Identita původce události (`actor_user_id`) pochází výhradně ze serverového autentizačního kontextu.
+8. **Striktní oddělení Actor a Target:** Původce akce (`actor`) je nezaměnitelný s cílem či subjektem akce (`target`).
+9. **Event-specific recipient policy:** Příjemci notifikací jsou určováni podle specifické sémantiky konkrétní události, nikoliv paušálně podle rolí.
+10. **Oprávněný příjem notifikace:** Uživatel obdrží pouze takovou notifikaci, k jejímuž obsahu má v daném okamžiku platné přístupové oprávnění.
+11. **Osobní soukromí notifikací:** Uživatel smí vidět výhradně své vlastní osobní notifikace.
+12. **Omezení přístupu ADMINA:** Globální role `ADMIN` nemá z titulu své funkce automatický přístup k osobním notifikacím jiných uživatelů.
+13. **Respektování hranic Nástěnek:** Notifikace nesmí obejít členství v Nástěnce ani zpřístupnit data nečlenům.
+14. **Nezávislost doménového stavu na asynchronních chybách:** Selhání asynchronního doručení notifikace nesmí způsobit rollback potvrzené doménové operace.
+15. **Spolehlivost distribuce a retry:** Notifikační transport musí umožňovat opakované doručení při dočasných výpadcích.
+16. **Idempotence zpracování:** Opakované doručení téže události nesmí vyvolat duplicitní uživatelskou notifikaci ani vícenásobný vedlejší účinek.
+17. **Zákaz citlivých tajemství v událostech:** Autentizační tajemství, hesla a privátní tokeny se nikdy nesmí nacházet v payloadu událostí ani v notifikacích.
+18. **Autonomie AuditLogu:** Životní cyklus `AuditLogu` je nezávislý na smazání notifikací, událostí v Outboxu i cílových doménových objektů.
+
+---
+
+### 25.32 Rozhodnutí odložená do implementační fáze
+
+Následující technologická a implementační rozhodnutí **nejsou v tomto architektonickém kroku schválena ani závazně vybrána** a jejich volba je záměrně odložena do implementační fáze:
+
+* **Konkrétní Event Bus a Message Broker:** Volba konkrétního brokeru či transportu (např. Redis Pub/Sub, Kafka, RabbitMQ, in-memory EventEmitter, PostgreSQL LISTEN/NOTIFY).
+* **Fyzická Outbox implementace:** Zda bude Outbox tabulka v PostgreSQL/SQLite, samostatná fronta či systémové řešení frameworku.
+* **Technologie pro Real-Time komunikaci:** Volba mezi WebSockets, Server-Sent Events (SSE), HTTP long-polling či externími službami (Pusher, Firebase).
+* **Poskytovatel externích notifikací:** Konkrétní e-mailový provider (Resend, SendGrid, Postmark, SMTP) a push provider (WebPush, Firebase Cloud Messaging, OneSignal).
+* **Konkrétní knihovna pro front-end notifikace:** Toast knihovna a správa stavu notifikací na klientovi.
+* **Časové limity expirace a retence:** Konkrétní počty dní pro uchovávání přečtených notifikací a rotaci Outbox tabulky.
+* **Mechanismus Dead-Letter Queue:** Způsob ukládání a monitorování trvale nedoručitelných událostí.
+
+> [!NOTE]
+> Step 10 definuje závaznou logickou architekturu událostí, invarianty a bezpečnostní hranice. Konkrétní technologické nástroje budou vybrány až v technické implementační fázi.
+
+---
+
+## 26. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -2815,3 +3529,4 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 | **0.5.0** | 19. 9. 2026 | Step 7: Doménové operace, API a autorizační hranice – princip autority backendu, kontext actor vs. target, logické API operace nad Board, Membership, Task a Area (včetně řízeného hard-delete Tasku a smazání oblasti), autorizační matice, nezávislý audit destruktivních operací (DELETE_TASK, DELETE_AREA), atomické transakce a doménové invarianty. | Antigravity / Product Owner |
 | **0.6.0** | 19. 9. 2026 | Step 8 – Databázové schéma, primární a cizí klíče, constrainty, referenční integrita, transakční hranice a databázové invarianty. | Antigravity / Product Owner |
 | **0.7.0** | 19. 9. 2026 | Step 9 – Autentizace, identity, session, životní cyklus přihlášení, ochrana identity Actor a oddělení autentizace od autorizace. | Antigravity / Product Owner |
+| **0.8.0** | 19. 9. 2026 | Step 10 – Doménové události, systémové reakce, notifikační model, recipient policy, spolehlivé předávání událostí, idempotence a oddělení Event / Notification / Audit. | Antigravity / Product Owner |
