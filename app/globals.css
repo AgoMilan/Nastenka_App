@@ -1,15 +1,19 @@
-/* globals.css – minimální baseline styly pro Next.js App Router */
-/* Tailwind CSS bude přidán v etapě 17.4 */
+@import "tailwindcss";
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+:root {
+  --background: #ffffff;
+  --foreground: #18181b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --radius: 0.5rem;
 }
 
-html {
+body {
+  background-color: var(--background);
+  color: var(--foreground);
   font-family:
     system-ui,
     -apple-system,
@@ -22,13 +26,5 @@ html {
     "Open Sans",
     "Helvetica Neue",
     sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
-  -webkit-text-size-adjust: 100%;
-}
-
-body {
-  background-color: #ffffff;
-  color: #1a1a1a;
   min-height: 100vh;
 }
