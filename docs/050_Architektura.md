@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 1.0.0<br>
+**Verze:** 1.1.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -4492,7 +4492,661 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 
 ---
 
-## 29. Historie verzí
+## 30. Step 13 – UI/UX architektura, navigace a struktura obrazovek
+
+Tato kapitola definuje logickou UI/UX architekturu systému Nástěnka. Stanovuje pravidla pro strukturu obrazovek, navigační toky, responzivní chování (desktop, tablet, mobil), interakční stavy, řešení souběhu a striktní oddělení uživatelské ergonomie od bezpečnostních autorizačních mechanismů. Cílem je popsat, **jak člověk aplikaci používá, jak se v ní orientuje a co vidí na jednotlivých obrazovkách**, aniž by byl předčasně fixován konkrétní grafický layout, CSS framework nebo knihovna komponent.
+
+---
+
+### 30.1 Cíl a architektonický rozsah
+
+Architektura uživatelského rozhraní a prožitku (UI/UX) jednoznačně odpovídá na 17 základních otázek fungování systému:
+1. **Hlavní obrazovky aplikace:** Přihlášení, Seznam Nástěnek, Přehled Nástěnky (Dashboard), Oblasti, Seznam Úkolů, Detail Úkolu, Moje práce, Osobní prostor, Členové Nástěnky a Notifikační centrum.
+2. **Hlavní navigace:** Kontextový hierarchický model: Výběr Nástěnky ──► Navigace v Nástěnce ──► Aktuální sekce.
+3. **Přístup k Nástěnce:** Zobrazení pouze těch Nástěnek, ke kterým má uživatel platné členství nebo administrátorský přístup.
+4. **Pohyb mezi Nástěnkami:** Snadno dostupný přepínač Nástěnek (Board Switcher) s trvalou indikací aktuálního kontextu.
+5. **Pohyb mezi Oblastmi (Area):** Rychlá filtrace a navigace do kontextu konkrétní oblasti (např. Prodejna, Chata, Dům, Koláčkova).
+6. **Práce s Úkoly:** Přehledný seznam, rychlé vytvoření, detailní zobrazení, změna stavu a přiřazení řešitele v souladu s pravidly.
+7. **Fungování osobního prostoru:** Soukromý prostor uživatele izolovaný od týmových dat Nástěnky.
+8. **Oddělení týmových a osobních informací:** Zřetelná vizuální a logická hranice – uživatel v každém okamžiku ví, co je sdílené a co soukromé.
+9. **Chování na desktopu:** Širokoúhlé zobrazení, vícepanelové uspořádání, možnost bočních detailů a rychlý přístup k filtrům.
+10. **Chování na mobilu:** Prioritizace obsahu, velké dotykové cíle, vertikální tok bez horizontálního posunu, kontextová spodní navigace.
+11. **Přizpůsobení rozhraní roli (Role-awareness):** UI reflektuje možnosti role (`ADMIN`, `OWNER`, `MANAGER`, `MEMBER`) pro maximální přehlednost.
+12. **Zobrazení akcí:** Oprávněné akce jsou přímo dostupné; nedostupné akce jsou skryty nebo srozumitelně deaktivovány s vysvětlením.
+13. **Stavy rozhraní:** Jednotná koncepce pro stavy načítání (loading), prázdné výsledky (empty), chyby (error) a konflikty verzí (conflict).
+14. **Práce s notifikacemi:** Notifikační centrum, badge s počtem nepřečtených zpráv a rychlý proklik na cílový objekt.
+15. **Reakce na souběžnou změnu dat:** Transparentní zpracování konfliktu verzí (`409 Conflict`) s možností vědomého rozhodnutí uživatele (žádný tichý přepis).
+16. **Respektování dotazovací vrstvy (Step 12):** Integrace serverového filtrování, vyhledávání, deterministického řazení a stránkování.
+17. **Zákaz suplování autorizace:** UI slouží k ergonomické prezentaci, backend zůstává jedinou bezpečnostní autoritou.
+
+---
+
+### 30.2 Zásadní princip: UX ≠ Autorizace
+
+Nejdůležitější bezpečnostní a architektonickou zásadou klientského rozhraní je:
+
+> [!IMPORTANT]
+> **Uživatelské rozhraní není bezpečnostní hranice.**
+> Přizpůsobení rozhraní rolím (UI Role Awareness) slouží výhradně pro ergonomii a přehlednost. Skrytí či deaktivace tlačítka nepředstavuje zabezpečení dat.
+
+```text
+UI Role Awareness ────► Ergonomie a přehlednost (Lepší UX)
+Backend Authorization ──► Bezpečnost a ochrana dat (Autorita systému)
+```
+
+1. **Zobrazení prvku nezakládá právo:** To, že rozhraní zobrazí tlačítko „Smazat úkol“, neznamená, že operace proběhne; backend každý požadavek nezávisle autorizuje.
+2. **Skrytí prvku nechrání data:** Pouhé skrytí tlačítka v HTML/DOM nechrání API před přímým voláním neoprávněným klientem.
+3. **Odolnost vůči manipulaci:** Přímé volání jakéhokoliv API endpointu musí být stoprocentně bezpečné i v případě, že uživatel záměrně manipuluje s klientským kódem v prohlížeči.
+
+---
+
+### 30.3 UX principy systému Nástěnka
+
+Systém Nástěnka je navržen podle deseti základních principů uživatelského prožitku:
+1. **Jednoduchost (Anti-Jira princip):** Rozhraní se vyhýbá zbytečné administrativní zátěži, složitým konfiguracím a nepřehledným formulářům.
+2. **Rychlá orientace:** Uživatel na první pohled rozpozná, kde se nachází, co je nového a co vyžaduje jeho pozornost.
+3. **Minimum zbytečných kroků:** Časté operace (převzetí úkolu, změna stavu, přidání poznámky) jsou dostupné na jedno či dvě kliknutí.
+4. **Konzistentní ovládání:** Stejné akce a symboly fungují identicky napříč všemi sekcemi a obrazovkami aplikace.
+5. **Okamžitá zpětná vazba:** Každá interakce má okamžitou odezvu (indikátor ukládání, toast zpráva, srozumitelná chybová hláška).
+6. **Bezpečnost destruktivních operací:** Nevratné operace jsou vizuálně odlišeny a chráněny před náhodným kliknutím.
+7. **Předvídatelnost:** Systém se chová stabilně; nedochází k nečekaným skokům stránky, náhlým změnám pozic ani tichým přepisům dat.
+8. **Mobilní ergonomie v terénu:** Všechny běžné operace musí být pohodlně proveditelné jednou rukou na mobilním telefonu.
+9. **Přístupnost (Accessibility):** Podpora klávesového ovládání, vysoký kontrast, čitelné písmo a srozumitelné texty.
+10. **Rozumná informační hustota:** Rozhraní není ani prázdné, ani přeplněné; důležité informace mají vizuální prioritu.
+
+---
+
+### 30.4 Hlavní informační architektura (Information Architecture)
+
+Logická hierarchie systému Nástěnka je strukturována do přehledného stromu:
+
+```text
+Aplikace Nástěnka
+│
+├── Přihlášení a obnova přístupu
+│
+├── Moje nástěnky (Výběr autorizovaného týmového prostoru)
+│   ├── Nástěnka A
+│   ├── Nástěnka B
+│   └── ...
+│
+├── Vybraná Nástěnka (Kontext týmové práce)
+│   ├── Přehled (Dashboard stavu, nepřiřazené, po termínu)
+│   ├── Oblasti (Organizační členění: Prodejna, Chata, Dům, Koláčkova)
+│   ├── Úkoly (Hlavní seznam úkolů, filtry, vyhledávání)
+│   ├── Moje práce (Personalizovaný pohled na úkoly daného člena)
+│   ├── Členové (Přehled členů týmu a jejich rolí)
+│   └── Nastavení Nástěnky (Metadata, správa oblastí – dle role)
+│
+├── Osobní pracovní prostor (Privátní poznámky a úkoly uživatele)
+│
+└── Uživatelský profil a Notifikační centrum
+```
+
+Tato struktura představuje logický koncept informační architektury, nikoliv pevné URL routy.
+
+---
+
+### 30.5 Základní navigační model (Navigation Model)
+
+Navigace v systému uplatňuje třístupňový model toku:
+
+```text
+Board Switcher (Výběr Nástěnky)
+      ↓
+Board Navigation (Sekce v rámci Nástěnky: Přehled, Oblasti, Úkoly, Moje práce, Členové)
+      ↓
+Current Section & Content (Pracovní plocha sekce, filtry, detail)
+```
+
+Uživatelské rozhraní garantuje:
+* Možnost kdykoliv bleskově přepnout mezi dostupnými Nástěnkami.
+* Neustálou vizuální přítomnost informace o tom, v jaké Nástěnce se uživatel nachází.
+* Přímý přístup k Osobnímu prostoru, Notifikacím a Odhlášení z kteréhokoliv místa aplikace.
+
+---
+
+### 30.6 Obrazovka Přihlášení (Login Screen)
+
+Vstupní brána do systému v návaznosti na Step 9:
+* **Prvky formuláře:** Uživatelské jméno / e-mail, heslo, volba „Zůstat přihlášen“, tlačítko „Přihlásit se“.
+* **Odkaz na obnovu přístupu:** Srozumitelná cesta pro reset hesla.
+* **Indikace průběhu:** Během ověřování údajů je tlačítko deaktivováno a zobrazuje se animace probíhajícího ověření.
+* **Ochrana soukromí při chybě:** Při zadání neplatných údajů systém zobrazí neutrální sdělení: *„Neplatné přihlašovací jméno nebo heslo.“* UI nesmí prozradit, zda daný uživatelský účet v databázi existuje.
+
+---
+
+### 30.7 Obrazovka „Moje nástěnky“ (Board Directory)
+
+Výchozí rozcestník po přihlášení uživatele:
+* **Autorizovaný výpis:** Zobrazuje pouze Nástěnky v rámci Authorized Query Scope (uživatel je členem nebo systémový Admin).
+* **Vyloučení smazaných Nástěnek:** Soft-deleted Nástěnky (`deleted_at IS NOT NULL`) se v běžném seznamu nezobrazují.
+* **Obsah karty Nástěnky:**
+  * Název Nástěnky a volitelný stručný popis.
+  * Role aktuálního uživatele na dané Nástěnce (`OWNER`, `MANAGER`, `MEMBER`).
+  * Počet aktivních / otevřených úkolů (pokud je efektivně dostupné).
+  * Indikátor nepřečtených notifikací vztahujících se k dané Nástěnce.
+* **Tlačítko vytvoření Nástěnky:** Dostupné oprávněným uživatelům dle systémových pravidel.
+
+---
+
+### 30.8 Nástěnka – Přehled / Dashboard (Board Overview)
+
+Úvodní obrazovka konkrétní Nástěnky slouží jako rychlý orientační přehled:
+* **Nepřiřazené úkoly:** Blok zobrazující nově vytvořené úkoly čekající na řešitele s možností rychlého převzetí.
+* **Úkoly po termínu (Overdue):** Zvýrazněný varovný blok úkolů vyžadujících okamžitou pozornost.
+* **Moje otevřené úkoly:** Rychlý náhled na úkoly přihlášeného uživatele v této Nástěnce.
+* **Přehled oblastí:** Dlaždice jednotlivých oblastí s indikátorem počtu úkolů.
+* **Poslední aktivita:** Stručný přehled nedávných změn v týmu.
+
+> [!NOTE]
+> Informační dashboard má výhradně orientační charakter. Nevytváří nová oprávnění ani nenahrazuje autorizační pravidla backendu.
+
+---
+
+### 30.9 Oblasti v uživatelském rozhraní (Area UI)
+
+Oblasti představují přirozené organizační členění dané Nástěnky (např. *Prodejna*, *Chata*, *Dům*, *Koláčkova*):
+* **Přístup do oblasti:** Kliknutím na oblast se uživatel dostane do filtrovaného seznamu úkolů dané oblasti.
+* **Vizuální rozlišení:** Každá oblast může mít přiřazenu specifickou barvu či ikonu pro okamžité rozpoznání na kartách úkolů.
+* **Správa oblastí:** Vytvoření, přejmenování a řízené smazání oblasti (`DELETE_AREA`) je dostupné oprávněným rolím (`OWNER`, `MANAGER`, `ADMIN`).
+* **Varování při mazání oblasti:** Smazání oblasti vyžaduje přísný potvrzovací dialog s výslovným upozorněním na smazání všech navázaných úkolů (Step 7 a 8).
+
+---
+
+### 30.10 Hlavní seznam úkolů (Tasks View)
+
+Centrální pracovní obrazovka pro správu a sledování úkolů:
+* **Filtrovací panel:** Rychlé filtry dle stavu, oblasti, řešitele, priority a termínu.
+* **Vyhledávací pole:** Prohledávání v názvu a popisu úkolů (Step 12).
+* **Řazení:** Možnost přepnutí řazení (např. dle termínu, priority, data vytvoření).
+* **Odlehčená karta úkolu (List Representation):**
+  * Název úkolu (`title`),
+  * Název oblasti (`Area`),
+  * Stavový odznáček (`status`),
+  * Priorita (`priority`),
+  * Jméno Hlavního řešitele (`assignee`),
+  * Termín splnění (`due_date`) s barevným zvýrazněním zpoždění,
+  * Ikona indikující přítomnost spoluřešitelů či komentářů.
+
+---
+
+### 30.11 Detail úkolu (Task Detail)
+
+Detailní pohled na úkol otevřený jako samostatná stránka nebo boční panel:
+* **Hlavička:** Název úkolu, identifikátor, oblast, tlačítka dostupných akcí dle role a vztahu k úkolu.
+* **Stav a řešitel:** Výrazné zobrazení aktuálního stavu a Hlavního řešitele s možností rychlé změny (dle oprávnění).
+* **Spoluřešitelé:** Přehled všech přiřazených spoluřešitelů s možností připojit se (`+ Připojit se k úkolu`) nebo odebrání Hlavním řešitelem.
+* **Popis:** Kompletní formátovaný text zadání úkolu.
+* **Metadata:** Autor úkolu, datum vytvoření, termín splnění, datum poslední aktualizace.
+* **Auditní historie:** Přehled významných změn stavu, termínu a řešitelů.
+
+> [!CAUTION]
+> Detail úkolu podléhá nezávislému ověření oprávnění na backendu. Pouhé vlastnictví URL odkazu neopravňuje k zobrazení obsahu.
+
+---
+
+### 30.12 Vytvoření a úprava úkolu (Task Create / Edit)
+
+Formulář pro zadání nebo editaci úkolu:
+* **Povinná a volitelná pole:**
+  * Název úkolu (povinné, srozumitelné zadání),
+  * Oblast (výběr ze seznamu aktivních oblastí Nástěnky),
+  * Popis úkolu (podrobnosti, kontext, specifikace),
+  * Priorita (výběr z doménových priorit),
+  * Termín splnění (volba data z kalendáře),
+  * Hlavní řešitel (výběr ze členů Nástěnky nebo volba `Nepřiřazeno`).
+* **Validace:** Okamžitá klientská kontrola povinných polí s následným definitivním potvrzením na backendu.
+* **Ochrana před ztrátou dat:** Při pokusu o opuštění rozpracovaného neuloženého formuláře je uživatel vyzván k potvrzení.
+
+---
+
+### 30.13 Sekce „Moje práce“ (My Work View)
+
+Personalizovaný pohled na týmové úkoly v rámci dané Nástěnky:
+* **Úkoly, kde jsem Hlavním řešitelem:** Seznam úkolů, za jejichž dokončení uživatel přímo odpovídá.
+* **Úkoly, kde jsem Spoluřešitelem:** Úkoly, na kterých uživatel spolupracuje s ostatními.
+* **Rychlá filtrace:** Možnost přepínání mezi aktivními, dokončenými a odloženými úkoly uživatele.
+
+> [!IMPORTANT]
+> **Důsledné oddělení:** Sekce „Moje práce“ představuje personalizovaný filtr nad **týmovými daty Nástěnky**. Není to nový typ členství ani náhrada Osobního pracovního prostoru.
+
+---
+
+### 30.14 Osobní pracovní prostor uživatele (Personal Space UI)
+
+Samostatná sekce aplikace určená pro ryze soukromou práci konkrétního uživatele:
+* **Absolutní soukromí:** Osobní prostor patří výhradně přihlášenému uživateli. Žádný jiný uživatel (ani členové týmu, ani globální `ADMIN`) do něj nemá přístup.
+* **Účel:** Soukromé poznámky, osobní úkoly nezávislé na Nástěnce, příprava konceptů.
+* **Vizuální odlišení:** Osobní prostor má zřetelně odlišné záhlaví a barevný motiv, aby uživatel v každém okamžiku věděl, že se nachází v soukromé zóně.
+* **Fyzický datový model:** Je koncipován jako samostatná doménová oblast, jejíž detailní databázové schéma bude dopracováno v implementační fázi.
+
+---
+
+### 30.15 Seznam a správa členů Nástěnky (Members View)
+
+Obrazovka zobrazující přehled všech uživatelů zapojených do dané Nástěnky:
+* **Položka člena:** Jméno, příjmení, e-mail (pouze pokud má volající oprávnění jej vidět), aktuální role na Nástěnce (`OWNER`, `MANAGER`, `MEMBER`), stav účtu (aktivní / deaktivovaný).
+* **Oddělení role a odpovědnosti:** Rozhraní striktně rozlišuje roli uživatele na Nástěnce od jeho řešitelské role na konkrétních úkolech. Role `MEMBER` neznamená automaticky nezodpovědného člena.
+* **Dostupné akce:** Závisejí na roli přihlášeného uživatele (přidání člena, odebrání, změna role).
+
+---
+
+### 30.16 Správa rolí a převod vlastnictví (Role Management UI)
+
+Uživatelské rozhraní pro správu organizační struktury týmu:
+* **Jmenování / Změna Managera:** Dostupné pouze pro `OWNER` a `ADMIN`. Umožňuje nastavit maximálně jednoho Managera na Nástěnce.
+* **Převod vlastnictví (Transfer Ownership):**
+  * Nejkritičtější organizační akce.
+  * Dostupné výhradně pro stávajícího `OWNER` a systémového `ADMIN`.
+  * Vyžaduje explicitní modální dialog s nepřehlédnutelným varováním:
+    ```text
+    UPOZORNĚNÍ: Převádíte vlastnictví Nástěnky „Prodejna“ na uživatele Jan Novák.
+    Potvrzením této operace přestáváte být Vlastníkem (OWNER) a stáváte se běžným Členem (MEMBER).
+    Tuto operaci nelze vzít jednostranně zpět.
+    ```
+
+---
+
+### 30.17 Destruktivní operace v rozhraní (Destructive Actions UX)
+
+Jednotný a striktní standard pro nevratné doménové operace:
+* **Dotčené operace:** Smazání Nástěnky (`DELETE_BOARD`), řízené smazání úkolu (`DELETE_TASK`), smazání oblasti (`DELETE_AREA`), odebrání člena (`REMOVE_MEMBER`).
+* **Vizuální prezentace:** Tlačítka destruktivních akcí jsou zvýrazněna varovnou (červenou) barvou a umístěna odděleně od běžných akcí.
+* **Potvrzovací dialog pro řízený hard-delete:**
+  Tam, kde doménová architektura (Step 7 a 8) vyžaduje řízené fyzické odstranění, musí uživatel do vstupního pole ručně vepsat přesný potvrzovací řetězec:
+  ```text
+  SMAZAT
+  ```
+  Tlačítko pro finální potvrzení je aktivováno teprve po bezchybném vepsání tohoto textu.
+
+---
+
+### 30.18 Role-Based UI přizpůsobení (Role-Aware Interface)
+
+Uživatelské rozhraní se adaptuje na možnosti role přihlášeného uživatele pro zajištění maximální přehlednosti:
+
+| Role na Nástěnce | Viditelnost v UI |
+|---|---|
+| **OWNER** | Plný přístup ke všem sekcím, možnost převodu vlastnictví, správa Managera, nastavení Nástěnky, mazání Nástěnky i oblastí. |
+| **MANAGER** | Správa oblastí, správa běžných členů, přidělování úkolů, mazání úkolů. Skryta volba převodu vlastnictví a smazání celé Nástěnky. |
+| **MEMBER** | Běžná práce s úkoly (vytváření, převzetí, dokončení, připojení se jako spoluřešitel). Skryty administrativní záložky správy Nástěnky a oblastí. |
+| **ADMIN (Globální)** | Možnost aktivace administrativního režimu pro řešení krizových stavů dle pravidel Step 5 až Step 9. |
+
+---
+
+### 30.19 Responzivní architektura: Desktop, Tablet a Mobil (Responsive UX)
+
+Systém je navržen podle principu Mobile-First s plnou adaptabilitou na velké obrazovky:
+
+#### Desktop
+* Plné vícesloupcové rozvržení (sidebar s navigací, hlavní seznam úkolů, volitelný boční panel s detailem úkolu).
+* Trvale viditelný panel filtrů s okamžitou odezvou.
+* Široké tabulkové či kartové zobrazení s bohatými metadaty.
+
+#### Tablet
+* Adaptivní rozvržení s výsuvným navigačním panelem.
+* Seznam úkolů s prioritními sloupci a dotykově optimalizovanými prvky.
+
+#### Mobilní telefon
+* Jednosloupcový vertikální layout optimalizovaný pro ovládání palcem.
+* Žádný horizontální posun (scroll) v základním rozhraní.
+* Filtry a vyhledávání umístěny ve výsuvném spodním panelu (Bottom Sheet).
+* Velké dotykové cíle (minimální doporučená velikost ovládacích prvků $44 \times 44\text{ px}$).
+
+---
+
+### 30.20 Mobilní navigace (Mobile Navigation Model)
+
+Ergonomický navigační model pro mobilní zařízení:
+* **Spodní navigační lišta (Bottom Bar):** Rychlý přístup k pěti klíčovým cílům:
+  1. **Nástěnka** (Přehled),
+  2. **Úkoly** (Seznam a filtry),
+  3. **+ Přidat** (Plovoucí akční tlačítko pro rychlé vytvoření úkolu),
+  4. **Moje práce** (Osobní úkoly v týmu),
+  5. **Více / Profil** (Členové, Notifikace, Přepínač Nástěnek, Osobní prostor).
+* **Kontextový přepínač:** V záhlaví mobilní obrazovky je vždy viditelný název aktuální Nástěnky s možností klepnutím rozbalit seznam ostatních Nástěnek.
+
+---
+
+### 30.21 Karta úkolu na mobilu (Mobile Task Card)
+
+Mobilní karta úkolu je navržena pro maximální čitelnost a efektivitu v terénu:
+```text
+┌────────────────────────────────────────────────────────┐
+│ [Prodejna]  Vysoká priorita               Termín: Dnes │
+│ Opravit chladicí box na mléčné výrobky                 │
+│                                                        │
+│ Řešitel: Milan              Stav: V řešení             │
+│ [ + Připojit se ]                    [ Detail úkolu ──►] │
+└────────────────────────────────────────────────────────┘
+```
+* **Klíčové informace na první pohled:** Oblast, priorita, termín, název, řešitel a stav.
+* **Rychlá akce:** Možnost rychlého převzetí úkolu nebo připojení se jako spoluřešitel přímo z karty bez nutnosti otevírat plný detail.
+
+---
+
+### 30.22 UI vyhledávání a filtrování (Search & Filter Interface)
+
+Rozhraní pro vyhledávání a filtrování (Step 12) poskytuje okamžitou vizuální zpětnou vazbu:
+* **Vyhledávací pole:** Vizuálně dominantní vstup s možností okamžitého smazání zadaného textu křížkem.
+* **Aktivní filtry (Filter Chips):** Každý aplikovaný filtr (např. `Oblast: Prodejna`, `Stav: Aktivní`) je zobrazen jako samostatný štítek s možností individuálního zrušení kliknutím.
+* **Tlačítko „Resetovat filtry“:** Jedním kliknutím vrátí zobrazení do výchozího stavu.
+* **Indikátor řazení:** Jasné zobrazení aktuálního klíče a směru řazení (např. *Dle termínu vzestupně*).
+
+---
+
+### 30.23 Prázdné stavy (Empty States UX)
+
+Pokud dotaz nevrátí žádná data, rozhraní nikdy nezobrazuje holou prázdnou stránku ani technickou chybu. Každý prázdný stav má vstřícný, srozumitelný a návodný charakter:
+* **Žádné Nástěnky:** *„Zatím nejste členem žádné Nástěnky. Požádejte správce o pozvání nebo vytvořte novou Nástěnku.“*
+* **Nástěnka bez úkolů:** *„V této Nástěnce zatím nejsou žádné úkoly. Začněte vytvořením prvního úkolu tlačítkem výše.“*
+* **Filtr bez výsledků:** *„Zadaným filtrům neodpovídá žádný úkol. Zkuste upravit vyhledávací dotaz nebo [Resetovat filtry].“*
+* **Moje práce bez položek:** *„Skvělá práce! V této Nástěnce aktuálně nemáte přiřazen žádný otevřený úkol.“*
+* **Žádné notifikace:** *„Vše máte vyřízeno. Žádná nová upozornění.“*
+
+---
+
+### 30.24 Stavy načítání (Loading States UX)
+
+Během načítání a zpracování dat rozhraní zachovává klidný a stabilní vizuální projev:
+* **Skeleton Screeny:** Místo blikajících spinnerů upřednostňuje rozhraní kostry obsahu (skeletony), které drží tvar budoucího rozvržení a eliminují skákání layoutu.
+* **Deaktivace tlačítek při odesílání:** Během odesílání formuláře či ukládání změny je akční tlačítko deaktivováno a doplněno jemným indikátorem průběhu, aby se předešlo vícenásobnému odeslání.
+* **Zákaz předčasného optimismu u kritických operací:** Systém nesmí tvářit, že operace proběhla, dokud backend nevydá potvrzující odpověď.
+
+---
+
+### 30.25 Chybové stavy a uživatelská hlášení (Error States UX)
+
+Chyby jsou uživateli komunikovány srozumitelně, lidským jazykem a bez zobrazování technických stack trace:
+* **401 Unauthorized:** *„Platnost vašeho přihlášení vypršela. Přihlaste se prosím znovu.“*
+* **403 Forbidden:** *„K provedení této akce nemáte dostatečná oprávnění.“*
+* **404 Not Found:** *„Požadovaná Nástěnka nebo úkol neexistuje nebo k nim nemáte přístup.“*
+* **409 Conflict:** *„Úkol byl mezitím změněn jiným uživatelem. Načtěte prosím aktuální verzi.“*
+* **422 Unprocessable Entity:** *„Zadané údaje nejsou platné. Zkontrolujte prosím označená pole.“*
+* **Výpadek sítě / Timeout:** *„Nepodařilo se navázat spojení se serverem. Zkontrolujte připojení k internetu a zkuste to znovu.“*
+
+---
+
+### 30.26 Uživatelské řešení konfliktů (Concurrency & Conflict UX)
+
+Při vzniku konfliktu verzí (`409 Conflict`) v návaznosti na Step 11 rozhraní postupuje deterministicky:
+
+```text
+Uživatel odesílá úpravu Úkolu
+           ↓
+Backend vrací HTTP 409 Conflict (Zjištěna novější verze na serveru)
+           ↓
+UI zobrazí informační banner: „Tento úkol byl před okamžikem upraven jiným členem týmu.“
+           ↓
+UI nabídne porovnání změn (Aktuální stav na serveru vs. Rozpracovaná verze uživatele)
+           ↓
+Vědomé rozhodnutí uživatele:
+├── [ Načíst aktuální data ze serveru ] (Zahodit své lokální změny)
+└── [ Poupravit svou změnu a uložit znovu ] (Odeslat s novým číslem verze)
+```
+
+Zásada: **Žádné klientské tiché přepisování cizí práce.**
+
+---
+
+### 30.27 Uživatelské rozhraní notifikací (Notifications UI)
+
+Notifikační centrum poskytuje přehled o všech relevantních událostech v systému (Step 10):
+* **Notifikační zvonek / Badge:** V záhlaví aplikace zobrazuje červený indikátor s počtem nepřečtených notifikací.
+* **Výsuvný panel / Samostatná stránka:** Přehledný seznam upozornění seřazených od nejnovějších.
+* **Vizuální rozlišení:** Nepřečtená notifikace má odlišné podbarvení.
+* **Akce na notifikaci:** Klepnutím na notifikaci dojde k jejímu označení jako přečtené a přímému přesměrování na dotčený úkol či objekt.
+* **Tlačítko „Označit vše jako přečtené“:** Rychlé hromadné odbavení.
+
+---
+
+### 30.28 Real-time aktualizace v UI (Real-Time UX)
+
+Pokud systém v budoucnu implementuje real-time doručování událostí (např. WebSockets či SSE):
+* **Jemná aktualizace:** Změna stavu či řešitele úkolu se na obrazovce projeví plynulou animací bez kompletního reloadu stránky.
+* **Ochrana rozpracovaného vstupu:** Příchozí real-time událost nesmí nikdy přepsat formulářové pole, do kterého uživatel právě píše text.
+* **Bezpečnostní zásada:** Real-time zpráva má pouze notifikační charakter; není zdrojem bezpečnostní autorizace.
+
+---
+
+### 30.29 Optimistické aktualizace v UI (Optimistic UI Guidelines)
+
+Architektura stanovuje přísná pravidla pro používání optimistických aktualizací:
+* **Kde je optimistické UI povoleno:** Nízkorizikové reverzibilní akce (např. označení notifikace jako přečtené, přepnutí vizuálního filtru, přidání reakce).
+* **Kde je optimistické UI ZAKÁZÁNO:**
+  * Převod vlastnictví Nástěnky (`TRANSFER_OWNERSHIP`),
+  * Smazání Nástěnky (`DELETE_BOARD`),
+  * Smazání Oblasti (`DELETE_AREA`),
+  * Řízené smazání Úkolu (`DELETE_TASK`),
+  * Změny rolí a odebírání členů.
+Tyto kritické operace vyžadují absolutní potvrzení serverem před jakoukoliv trvalou změnou zobrazení.
+
+---
+
+### 30.30 Kontextová orientace a drobečková navigace (Breadcrumbs)
+
+Uživatel se v aplikaci nikdy nesmí cítit ztracen. Systém poskytuje jasnou kontextovou cestu:
+
+```text
+Moje nástěnky  ›  Prodejna  ›  Oblast: Chladicí boxy  ›  Úkol #142 (Oprava ventilátoru)
+```
+
+Každý segment drobečkové navigace je interaktivním odkazem umožňujícím bleskový návrat o úroveň výše.
+
+---
+
+### 30.31 Přístupnost a inkluzivní design (Accessibility)
+
+Systém Nástěnka respektuje zásady digitální přístupnosti:
+* **Ovládání z klávesnice:** Veškeré funkce aplikace (otevření menu, výběr úkolu, odeslání formuláře, potvrzení dialogu) jsou plně ovladatelné pomocí kláves `Tab`, `Enter`, `Mezerník` a `Escape`.
+* **Vizuální kontrasty:** Texty, stavové odznáčky a tlačítka splňují bezpečné kontrastní poměry vůči pozadí pro bezproblémovou čitelnost na slunci v terénu.
+* **Focus stavy:** Každý aktivní prvek má zřetelný vizuální rámeček focusu.
+* **Přístupné dialogy:** Modální okna zachycují focus klávesnice uvnitř dialogu a lze je snadno opustit klávesou `Escape`.
+
+---
+
+### 30.32 Lokalizace a terminologie rozhraní
+
+Aplikace Nástěnka používá jako výchozí jazyk rozhraní **češtinu**. Striktně odděluje interní technické identifikátory od přirozeného jazyka uživatele:
+
+| Interní identifikátor (Backend/DB) | Uživatelské označení v rozhraní (UI) |
+|---|---|
+| `assignee_id` | **Hlavní řešitel** |
+| `TaskParticipant` | **Spoluřešitel** |
+| `Membership.role` | **Role na Nástěnce** |
+| `due_date` | **Termín splnění** |
+| `Area` | **Oblast** |
+| `unassigned` | **Nepřiřazeno** |
+
+Terminologie je jednotná napříč celou aplikací a nevnáší do rozhraní cizí či technický žargon.
+
+---
+
+### 30.33 Stavový jazyk úkolu v rozhraní
+
+Rozhraní důsledně respektuje schválený stavový model:
+* **`Nepřiřazeno`:** Nový úkol, který dosud nemá určeného Hlavního řešitele (výrazná výzva k převzetí).
+* **`Aktivní` / `V řešení`:** Úkol má přiděleného řešitele a probíhá na něm práce.
+* **`Dokončeno`:** Práce na úkolu byla hotova (zelený indikátor).
+* **`Archivováno`:** Dokončený nebo odložený úkol přesunutý do archivu.
+
+---
+
+### 30.34 Zpětná vazba po úspěšné operaci (Feedback UX)
+
+Po každé úspěšně provedené a backendem potvrzené operaci rozhraní poskytuje nenásilné potvrzení:
+* **Toast zprávy:** Krátké, automaticky mizející proužky v rohu obrazovky (např. *„Úkol byl úspěšně vytvořen.“*, *„Změny byly uloženy.“*).
+* **Vizuální transformace:** Okamžitá plynulá změna stavového štítku na kartě úkolu.
+* **In-place aktualizace:** Seznam úkolů se automaticky aktualizuje bez nutnosti ručního obnovení stránky uživatelem.
+
+---
+
+### 30.35 Oddělení stavu UI a stavu serveru (UI State vs. Server State)
+
+Architektura důsledně rozlišuje dvě vrstvy stavu:
+* **Server State (Pravda o doméně):** Skutečná data uložená v databázi (názvy úkolů, přiřazení řešitelů, členství v Nástěnkách, verze pro OCC). Server state je řízen backendem.
+* **UI State (Stav rozhraní):** Dočasná data platná pouze v paměti prohlížeče (otevřený dialog, aktivní záložka, pozice scrollu, text rozepsaný v poli před odesláním, rozbalené menu). UI state nesmí být nikdy považován za zdroj doménové pravdy.
+
+---
+
+### 30.36 Přímé odkazy a hluboké linkování (URL / Deep Linking)
+
+Systém podporuje přímé odkazy na klíčové entity:
+* Přímý odkaz na Nástěnku, Oblast, konkrétní Úkol či Notifikaci.
+* **Zásada nezávislé autorizace:** Každé otevření aplikace přes přímý odkaz vyvolá kompletní autorizační kontrolu na backendu (Step 12). Znalost URL adresy ani identifikátoru nezakládá oprávnění k zobrazení dat (ochrana proti IDOR).
+
+---
+
+### 30.37 Navigace v historii prohlížeče (Browser Back / Forward UX)
+
+Pohyb pomocí tlačítek prohlížeče (Zpět / Vpřed) musí být intuitivní a stabilní:
+* Návrat z detailu úkolu na seznam úkolů musí zachovat dříve nastavené filtry, vyhledávací dotaz a stránkovací pozici.
+* Otevření a zavření modálního okna nebo bočního panelu se může promítnout do historie tak, aby tlačítko Zpět dialog zavřelo, aniž by uživatele nechtěně odnavigovalo z celé aplikace.
+
+---
+
+### 30.38 Standard destruktivních dialogů (Destructive Dialog Standards)
+
+Systém uplatňuje dvoustupňový standard potvrzovacích dialogů:
+
+1. **Běžná reverzibilní akce (např. opuštění rozepsaného formuláře):**
+   * Standardní dialog s tlačítky *„Zrušit“* a *„Zahodit změny“*.
+2. **Kritická nevratná operace (Smazání Nástěnky, Smazání Oblasti, Trvalé smazání Úkolu):**
+   * Červený varovný panel s detailním výčtem: co bude zničeno, jaké úkoly zaniknou, jaké vazby budou přerušeny.
+   * Výslovné upozornění na nevratnost akce.
+   * Povinnost vepsat ověřovací text `SMAZAT` pro odemčení potvrzovacího tlačítka.
+
+---
+
+### 30.39 Matice oprávnění a schopností UI (Role × UI Capability Matrix)
+
+Následující tabulka definuje doporučenou prezentaci akcí v rozhraní pro jednotlivé role:
+
+| Schopnost rozhraní (UI Capability) | ADMIN (Globální) | OWNER (Vlastník) | MANAGER (Správce) | MEMBER (Člen) |
+|---|---|---|---|---|
+| **Zobrazit Nástěnku dle oprávnění** | ano | ano | ano | ano |
+| **Vytvořit Úkol** | ano* | ano | ano | ano |
+| **Upravit metadata Nástěnky** | ano* | ano | ano | ne |
+| **Správa členů Nástěnky** | ano* | ano | omezeně | ne |
+| **Převod vlastnictví (OWNER)** | ano* | ano | ne | ne |
+| **Smazání Nástěnky (DELETE_BOARD)** | ano* | ano | ne | ne |
+| **Změna Hlavního řešitele** | dle autorizace | ano | ano | dle pravidel úkolu |
+| **Smazání Úkolu (DELETE_TASK)** | dle autorizace | ano | ano | dle pravidel úkolu |
+| **Smazání Oblasti (DELETE_AREA)** | ano* | ano | ano | ne |
+
+`ano*` = administrativní zásah systémového administrátora, který nemusí být přímým členem Nástěnky.
+
+> [!WARNING]
+> **Tato matice je výhradně ergonomickou projekcí autorizačního modelu do rozhraní.**
+> Nepředstavuje bezpečnostní mechanismus. O provedení každé akce rozhoduje výhradně autorizační vrstva na backendu.
+
+---
+
+### 30.40 Ochrana osobních údajů v rozhraní (UI Privacy)
+
+V návaznosti na principy ochrany soukromí:
+* **E-mailové adresy:** Zobrazují se pouze tam, kde má volající oprávnění je vidět (např. správa členů pro vlastníka/správce).
+* **Soukromí osobních notifikací:** Notifikace jsou přísně osobní a nesmí být viditelné jinému uživateli.
+* **Soukromí osobního prostoru:** Data osobního prostoru nejsou dostupná nikomu jinému než přihlášenému vlastníkovi.
+* **Minimalizace dat:** V seznamech a přehledech se zobrazují pouze data nezbytná pro daný kontext.
+
+---
+
+### 30.41 Interakce se stránkováním (Pagination UX)
+
+Uživatelské rozhraní respektuje serverové stránkování (Step 12):
+* **Způsob načítání:** Možnost volby mezi tlačítkem *„Načíst další úkoly“* a plynulým načítáním (infinite scroll) s využitím kurzoru (`cursor`).
+* **Zákaz neomezeného načítání:** Rozhraní nikdy nenačítá data nekontrolovaně celá najednou; vždy dodržuje serverové limity stránek.
+* **Uchování pozice:** Při návratu z detailu úkolu rozhraní obnoví přesnou pozici v načteném seznamu.
+
+---
+
+### 30.42 Debounce při vyhledávání (Search Input Debouncing)
+
+Pro zajištění vysokého výkonu a ochrany serveru před zahlcením:
+* Při psaní do vyhledávacího pole rozhraní aplikuje mechanismus debounce (slučování vstupů z klávesnice).
+* Požadavek na server je odeslán teprve poté, co uživatel na okamžik přestane psát (např. po 300 ms).
+* Backend i přes klientský debounce validuje každý přijatý vyhledávací požadavek nezávisle.
+
+---
+
+### 30.43 Práce s klientskou mezipamětí (Stale Cache Invalidation)
+
+Pokud klientská aplikace využívá lokální mezipaměť (cache):
+* Klientská mezipaměť **není zdrojem bezpečnostní pravdy**.
+* Při změně členství nebo role na Nástěnce musí dojít k okamžité invalidaci mezipaměti a znovunačtení autorizovaných dat ze serveru.
+* Po dokončení klíčových operací (vytvoření úkolu, smazání, převod vlastnictví) dochází k okamžitému znovunačtení čerstvých dat.
+
+---
+
+### 30.44 Soulad se Step 5 až Step 12
+
+Architektura uživatelského rozhraní a navigace je v naprostém a harmonickém souladu se všemi předchozími architektonickými kroky:
+* **Step 5 (Oprávnění):** Rozhraní věrně zrcadlí model rolí (`ADMIN`, `OWNER`, `MANAGER`, `MEMBER`) bez vytváření falešných klientských privilegií.
+* **Step 6 (Datový model):** Zobrazení entit `User`, `Board`, `Membership`, `Area`, `Task`, `TaskParticipant` a `Notification` respektuje jejich kardinality a vztahy.
+* **Step 7 (Doménové operace a API):** Všechny interakce rozhraní se přímo mapují na logické operace API; destruktivní operace respektují požadavek na potvrzení `SMAZAT`.
+* **Step 8 (Databázové schéma a constrainty):** Rozhraní počítá s integritními omezeními (unikátnost členství, právě 1 Owner, max. 1 Manager).
+* **Step 9 (Autentizace a Session):** Bezpečný login, ochrana identity Actora, bezpečné odhlášení.
+* **Step 10 (Události a Notifikace):** Notifikační centrum a integrace doménových událostí pro plynulé občerstvení dat.
+* **Step 11 (Souběh a Idempotence):** Deterministické zvládání `409 Conflict` bez tichého přepisu; bezpečné opakování požadavků.
+* **Step 12 (Vyhledávání, filtry a stránkování):** Zásada Authorization-First Filtering, podpora kurzorového stránkování a stabilního řazení.
+
+---
+
+### 30.45 Závazné UX invarianty Step 13
+
+Architektura uživatelského rozhraní, navigace a struktury obrazovek stanovuje následujících dvacet závazných invariantů:
+
+1. **UI nesupluje backendovou autorizaci:** Klientské rozhraní je optimalizací ergonomie; backend zůstává jedinou bezpečnostní autoritou.
+2. **Uživatel vždy vidí kontext aktuálního Boardu:** V každém okamžiku je jasně patrné, na které Nástěnce uživatel pracuje.
+3. **Týmový a osobní prostor jsou jasně rozlišeny:** Týmová data Nástěnky a soukromý prostor uživatele mají oddělené rozhraní a vizuální identitu.
+4. **Task vždy zobrazuje základní kontext Board / Area:** Úkol není zobrazen izolovaně bez informace o své příslušnosti k Nástěnce a Oblasti.
+5. **Osobní notifikace jsou privátní:** Notifikační centrum zpřístupňuje výhradně notifikace patřící přihlášenému uživateli.
+6. **Kritické operace vyžadují vědomé potvrzení:** Žádná destruktivní změna nemůže proběhnout nechtěným jednorázovým kliknutím.
+7. **`SMAZAT` je přesně vyžadováno tam, kde to stanoví doménová architektura:** Pro řízený hard-delete je vepsání tohoto řetězce povinné.
+8. **UI nesmí potvrdit úspěch před potvrzením serveru:** Zpětná vazba o úspěchu je zobrazena teprve po validní odpovědi backendu.
+9. **`409 Conflict` nesmí vést k tichému přepsání dat:** Konflikt verzí vždy vyžaduje vědomou reakci uživatele; strategie Last-Write-Wins je vyloučena.
+10. **Známé ID / URL není oprávnění:** Přímé zadání odkazu nezaručuje zobrazení obsahu; backend provádí nezávislé ověření.
+11. **Role zobrazená v UI není bezpečnostní autorita:** Úprava role v klientském kódu nepřináší žádná nová systémová oprávnění.
+12. **Seznamy jsou stránkované:** Rozhraní nikdy nenačítá neomezený objem dat najednou.
+13. **UI respektuje authorized query scope:** Rozhraní pracuje výhradně s daty, která mu byla serverem autorizovaně poskytnuta.
+14. **Search a filtry nemohou rozšířit přístup:** Klientské filtrování ani hledání nemůže zpřístupnit data cizích Nástěnek.
+15. **UI nezobrazuje zbytečná citlivá data:** Uplatňuje se striktní zásada minimalizace zobrazovaných údajů.
+16. **Mobilní verze zachovává stejné bezpečnostní hranice jako desktop:** Zmenšení obrazovky nemění pravidla přístupu ani ověřování.
+17. **Změna role se musí projevit v aktuálních UI capabilities:** Při odebrání role rozhraní okamžitě zneplatní lokální oprávnění a aktualizuje zobrazení.
+18. **Deaktivovaný uživatel nesmí být prezentován jako aktivní:** Stav účtu je v rozhraní věrně zobrazen.
+19. **Zobrazení dat a možnost je měnit jsou dvě oddělené capability:** Právo vidět objekt nezakládá automatické právo jej editovat.
+20. **Real-time event není zdroj bezpečnostní pravdy:** Události z reálného času slouží k občerstvení pohledu, nikoliv k autorizaci.
+
+---
+
+### 30.46 Rozhodnutí odložená do implementační fáze
+
+Následující technologická a grafická rozhodnutí **nejsou v tomto architektonickém kroku schválena ani závazně vybrána** a jejich volba je záměrně odložena do navazující implementační fáze:
+* **Konkrétní frontend framework:** Volba technologií (např. React, Vue, Svelte, Angular apod.).
+* **Knihovna komponent (Component Library):** Volba UI toolkitu (např. Shadcn UI, Tailwind UI, Radix, Material UI, Ant Design apod.).
+* **Design systém a grafická identita:** Přesné barevné palety, typografie, zaoblení rohů, stíny a vizuální styl.
+* **Routing library:** Konkrétní knihovna pro obsluhu URL na klientovi (React Router, TanStack Router apod.).
+* **State management:** Volba správy stavu (Zustand, Redux, Pinia, React Query apod.).
+* **Form library a validace:** Konkrétní formulářová knihovna (React Hook Form, Formik, Zod apod.).
+* **CSS / Styling engine:** Volba stylování (Tailwind CSS, CSS Modules, Styled Components apod.).
+* **Přesné responzivní breakpointy:** Konkrétní hodnoty v pixelech pro přechod mezi mobilem, tabletem a desktopem.
+* **Konkrétní komponenta mobilní navigace:** Volba mezi čistým Drawerem, Bottom Barem či plovoucím menu.
+* **Drag & Drop interakce:** Případné přetahování karet mezi sloupci (Kanban pohled).
+* **Animační framework:** Knihovna pro přechodové efekty (Framer Motion, CSS transitions).
+* **Toast a modal library:** Specifická knihovna pro vyskakovací dialogy a hlášení.
+* **Nástroje pro testování přístupnosti (a11y tooling):** Automatizované audity (Axe, Lighthouse).
+* **Knihovna pro internacionalizaci (i18n):** Nástroj pro případné budoucí vícejazyčné překlady.
+* **Konkrétní mechanismus optimistických aktualizací:** Způsob implementace lokálního rollbacku při chybě.
+* **Transportní vrstva pro real-time aktualizace:** Konkrétní technologie (WebSockets, Server-Sent Events).
+
+> [!NOTE]
+> Step 13 definuje logickou architekturu uživatelského rozhraní, navigaci a strukturu obrazovek. Veškeré konkrétní knihovny, grafické šablony a implementační detaily budou zvoleny v navazujících technických fázích projektu.
+
+---
+
+## 31. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -4506,3 +5160,4 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 | **0.8.0** | 19. 9. 2026 | Step 10 – Doménové události, systémové reakce, notifikační model, recipient policy, spolehlivé předávání událostí, idempotence a oddělení Event / Notification / Audit. | Antigravity / Product Owner |
 | **0.9.0** | 19. 9. 2026 | Step 11 – Souběžný přístup, optimistic concurrency control, stale data, race conditions, konflikty změn, idempotence, retry a transakční konzistence. | Antigravity / Product Owner |
 | **1.0.0** | 19. 9. 2026 | Step 12 – Vyhledávání, filtrování, řazení, stránkování, autorizovaný query scope, stabilní pořadí, výkonové hranice a bezpečné čtení dat. | Antigravity / Product Owner |
+| **1.1.0** | 19. 9. 2026 | Step 13 – UI/UX architektura, informační architektura, navigace, struktura obrazovek, desktop/mobile chování, role-aware UI, loading/error/empty states, conflict UX a ochrana osobních dat. | Antigravity / Product Owner |
