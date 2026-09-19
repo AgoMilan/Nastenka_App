@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 0.9.0<br>
+**Verze:** 1.0.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -3946,7 +3946,553 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 
 ---
 
-## 28. Historie verzí
+## 28. Step 12 – Vyhledávání, filtrování, řazení, stránkování a práce s daty
+
+Tato kapitola definuje architekturu pro efektivní, bezpečné a předvídatelné čtení a dotazování dat v systému Nástěnka. Stanovuje pravidla pro vyhledávání, filtrování, řazení a stránkování s důrazem na to, že **i samotné čtení dat představuje plnohodnotnou autorizovanou doménovou operaci**.
+
+---
+
+### 28.1 Cíl a architektonický rozsah
+
+Architektura práce s daty jednoznačně odpovídá na 18 základních otázek fungování systému:
+1. **Načítání Boardů:** Prostřednictvím autorizovaného endpointu vracejícího výhradně Nástěnky s aktivním členstvím uživatele.
+2. **Načítání Oblastí (Area):** Výhradně v kontextu konkrétní Nástěnky a oprávněného členství.
+3. **Načítání Úkolů (Task):** Omezeno na autorizovaný datový rozsah (`authorized query scope`) dané Nástěnky.
+4. **Filtrování Úkolů:** Kombinace stavů, řešitelů, spoluřešitelů, oblastí, priorit a termínů pomocí striktně validovaných doménových filtrů.
+5. **Vyhledávání:** Cílené prohledávání názvů a popisů uvnitř autorizovaného rozsahu bez rizika úniku dat.
+6. **Řazení výsledků:** Pouze pomocí povoleného seznamu řadicích klíčů (whitelist) se zákazem přímých databázových identifikátorů od klienta.
+7. **Stránkování:** Architektura podporuje jak offsetové, tak kurzorové stránkování s jasně vymezeným účelem pro každý typ.
+8. **Práce s velkým množstvím Úkolů:** Vynucené stránkování, přísné serverové limity a vynechání drahého výpočtu celkového počtu záznamů.
+9. **Autorizace při čtení:** Zásada „Authorization-First Filtering“ zaručující, že klient nemůže obdržet ani filtrovat neautorizovaná data.
+10. **Dynamické změny během stránkování:** Použití stabilního kurzorového stránkování (keyset pagination) eliminující duplicity a přeskakování položek při změnách na pozadí.
+11. **Stabilní pořadí výsledků:** Každé řazení povinně obsahuje deterministické sekundární a terciární klíče (tie-breakers).
+12. **Prázdné výsledky:** Deterministická sémantika rozlišující prázdný výsledek dotazu (`200 OK` s `items: []`) od neexistence zdroje (`404 Not Found`).
+13. **Neplatné filtry:** Striktní serverová validace a okamžité odmítnutí neplatných či nebezpečných dotazů (`400 Bad Request` / `422 Unprocessable Entity`).
+14. **Oddělení aktivního a archivního obsahu:** Výchozí pohledy zobrazují aktivní data; archivní obsah je přístupný pouze explicitním filtrem.
+15. **Hledání v osobním prostoru uživatele:** Absolutní oddělení soukromého prostoru od týmových dotazů Nástěnky.
+16. **Full-text versus přesná shoda:** Koncepční rozlišení exact match, substring/prefix a budoucího full-text vyhledávání.
+17. **Ochrana soukromých dat:** Výsledek vyhledávání nesmí sloužit jako orákulum pro zjištění existence cizích nebo skrytých entit.
+18. **Výkon bez předčasné optimalizace:** Řešení N+1 problémů dávkovým čtením a minimalizace přenášených dat oddělením seznamové a detailní reprezentace bez závislosti na konkrétním DB enginu.
+
+---
+
+### 28.2 Architektura čtení (Read Architecture)
+
+Základní bezpečnostní premisou architektury Nástěnky je:
+
+> [!IMPORTANT]
+> **Čtení dat je plnohodnotná autorizovaná operace.**
+> Backend nesmí nikdy předpokládat: *„Uživatel smí vidět Nástěnku, takže smí automaticky vidět veškeré její informace bez další kontroly.“*
+
+Každý požadavek na čtení dat musí na backendu striktně respektovat:
+* platnost a integritu autentizované relace (`Session`),
+* aktivní stav uživatele (`User.is_active = true`),
+* platné členství na dané Nástěnce (`Membership`) a roli (`OWNER`, `MANAGER`, `MEMBER`),
+* případnou globální roli (`ADMIN`),
+* pravidla izolace osobního prostoru uživatele,
+* stav cílové entity (např. `Board.deleted_at IS NULL`),
+* soukromost dat a přístupová práva k jednotlivým atributům.
+
+Frontend nesmí v žádném případě sloužit jako bezpečnostní filtr (např. stažení všech záznamů a následné „vyfiltrování“ na klientovi). Backend je jedinou a konečnou bezpečnostní autoritou.
+
+---
+
+### 28.3 Princip „Authorization-First Filtering“ a Authorized Query Scope
+
+Architektura zavádí zásadní bezpečnostní princip **Authorization-First Filtering**. Server před spuštěním jakéhokoliv uživatelského vyhledávání či filtrování nejdříve vymezí maximální povolenou množinu dat – tzv. **Authorized Query Scope**.
+
+#### Schéma toku zpracování dotazu:
+
+```text
+Actor (Požadavek z klienta)
+ ↓
+Authentication (Ověření identity a aktivní relace)
+ ↓
+Authorization / Scope (Sestavení nepřekročitelného autorizačního rámce)
+ ↓
+Accessible dataset (Authorized Query Scope)
+ ↓
+Filter (Aplikace doménových filtrů nad autorizovaným rozsahem)
+ ↓
+Search (Aplikace textového vyhledávání uvnitř autorizovaného rozsahu)
+ ↓
+Sort (Deterministické řazení dle schválených klíčů)
+ ↓
+Pagination (Stránkování výsledků)
+ ↓
+Response (Minimální seznamová reprezentace)
+```
+
+> [!CAUTION]
+> **Zákaz post-filtrování:** Je přísně zakázán postup:
+> `Všechny Tasky v databázi ──► Filtruj ──► Odstraň nepovolené záznamy pro uživatele`
+> Tento postup způsobuje závažná bezpečnostní rizika (únik informací přes celkový počet záznamů či měření času odezvy), rozpadá stránkování a vede k fatální degradaci výkonu.
+
+#### Koncept Authorized Query Scope
+Authorized Query Scope představuje logickou hranici, za kterou se dotaz nemůže dostat. Například:
+```text
+Kontext dotazu:
+- Board ID = 101
+- Actor ID = 25
+- Členství = MEMBER
+- Board.deleted_at IS NULL
+```
+Backend vytvoří dotaz pevně ukotvený v tomto rozsahu. Uživatelský filtr (např. `status=active`) nebo textové hledání (`search=faktura`) se vykonává výhradně jako dodatečná omezující podmínka uvnitř tohoto rozsahu. Tím je fyzicky vyloučeno, aby chybný či manipulovaný filtr zpřístupnil data z jiné Nástěnky nebo cizího osobního prostoru.
+
+---
+
+### 28.4 Načítání a seznam Nástěnek (Board Listing)
+
+Endpoint:
+```http
+GET /boards
+```
+
+Pravidla pro načítání seznamu Nástěnek:
+1. **Běžný uživatel:** Získává výhradně seznam Nástěnek, na kterých má aktivní a platné členství (`Membership`).
+2. **Globální role ADMIN:** Může využít administrativní přístup pro správu systému dle pravidel definovaných ve Step 5 až Step 9.
+3. **Vyloučení smazaných Nástěnek:** Logicky smazané Nástěnky (`deleted_at IS NOT NULL`) se v běžném provozním seznamu nezobrazují.
+4. **Izolace osobních/systémových Nástěnek:** Osobní pracovní prostory a interní systémové entity nesmí být nikdy vráceny přes tento obecný listing endpoint.
+5. **Rozlišení existence a oprávnění:** Systém striktně rozlišuje mezi stavem *„Nástěnka existuje v databázi“* a *„Uživatel je oprávněn Nástěnku zobrazit“*. Pokud uživatel není členem dané Nástěnky, její existence mu nesmí být odhalena.
+
+---
+
+### 28.5 Detail Nástěnky (Board Detail)
+
+Endpoint:
+```http
+GET /boards/{boardId}
+```
+
+Tento endpoint vrací detailní informace o Nástěnce pouze tehdy, pokud volající splní pětistupňové ověření na backendu:
+1. **Autenticita session:** Relace je platná, neexpirovaná a podepsaná.
+2. **Aktivní User:** Uživatelský účet je aktivní (`is_active = true`, `deleted_at IS NULL`).
+3. **Existence Boardu:** Záznam Nástěnky existuje v databázi.
+4. **Stav Boardu:** Nástěnka není logicky smazána (`deleted_at IS NULL`).
+5. **Membership nebo ADMIN:** Actor má platné členství v dané Nástěnce (`OWNER`, `MANAGER`, `MEMBER`) nebo je globální `ADMIN`.
+
+> [!WARNING]
+> Pouhá znalost či odhad identifikátoru `boardId` nezakládá oprávnění k získání dat (ochrana proti IDOR). Neoprávněný požadavek je striktně odmítnut.
+
+---
+
+### 28.6 Načítání a seznam Oblastí (Area Listing)
+
+Endpoint:
+```http
+GET /boards/{boardId}/areas
+```
+
+Pravidla pro načítání Oblastí:
+1. **Kontext Nástěnky:** Každá Oblast (`Area`) náleží právě jedné Nástěnce (`board_id`).
+2. **Omezení výsledků:** Dotaz vrací pouze oblasti náležející k zadané Nástěnce v rámci Authorized Query Scope.
+3. **Životní cyklus Oblastí:** Oblasti ve stavu `deleted` (nebo neaktivní dle svého životního cyklu) se v běžném seznamu nezobrazují.
+4. **Ochrana před nečleny:** Uživatel bez platného členství na Nástěnce nesmí seznam oblastí získat.
+5. **Dynamická povaha oblastí:** Systém respektuje koncepty oblastí schválené v doménových požadavcích (např. *Prodejna*, *Chata*, *Dům*, *Koláčkova*). Tyto hodnoty nepředstavují pevný databázový enum, ale konfigurovatelné entity v rámci Nástěnky.
+
+---
+
+### 28.7 Seznam a načítání Úkolů (Task Listing & Query Contract)
+
+Endpoint:
+```http
+GET /boards/{boardId}/tasks
+```
+
+Kontrakt dotazu definuje následující podporované parametry:
+* `area`: filtrace dle konkrétního ID oblasti,
+* `status`: filtrace dle stavu úkolu (vychází ze schváleného stavového modelu),
+* `priority`: filtrace dle priority úkolu,
+* `assignee`: filtrace dle Hlavního Řešitele (ID uživatele nebo hodnota `unassigned`),
+* `participant`: filtrace dle přítomnosti uživatele mezi Spoluřešiteli (ID uživatele),
+* `created_by`: filtrace dle autora úkolu (ID uživatele),
+* `due_date`: filtrace dle termínu splnění (relativní klíče nebo interval),
+* `overdue`: boolean příznak pro vyfiltrování úkolů po termínu,
+* `search`: textový řetězec pro vyhledávání,
+* `sort`: řadicí klíč ze schváleného whitelistu,
+* `order`: směr řazení (`asc` / `desc`),
+* `page` / `cursor`: stránkovací identifikátor nebo číslo stránky,
+* `limit`: požadovaný počet položek na stránku.
+
+---
+
+### 28.8 Filtrování dat (Filtering Engine)
+
+Filtrovací mechanismus podporuje standardní doménové dimenze:
+
+#### 1. Status
+Hodnoty striktně vycházejí ze schváleného stavového modelu Nástěnky:
+* `Nepřiřazeno` (nově vytvořený úkol bez řešitele),
+* `Aktivní` / `V řešení` (úkol s přiřazeným řešitelem v běhu),
+* `Dokončeno` (vyřešený úkol),
+* `Archivováno` (odložený či archivovaný úkol).
+
+#### 2. Assignee (Hlavní Řešitel)
+* konkrétní ID uživatele,
+* hodnota `unassigned` (úkoly nemající Hlavního Řešitele).
+
+#### 3. Area (Oblast)
+* konkrétní ID oblasti v rámci Nástěnky.
+
+#### 4. Priority (Priorita)
+* hodnoty dle schváleného modelu priorit (např. Nízká, Normální, Vysoká, Kritická).
+
+#### 5. Due Date (Termín splnění)
+* předdefinované filtry: `dnes`, `tento_tyden`, `po_terminu`, `bez_terminu`,
+* časový interval: `od` – `do`.
+
+#### Pravidlo kombinace filtrů
+* **Různé filtry se kombinují logickým operátorem AND:**
+  ```text
+  status = 'AKTIVNI' AND area = 4 AND assignee = 12
+  ```
+* **Vícenásobné hodnoty uvnitř téže dimenze se kombinují operátorem OR:**
+  ```text
+  status IN ('NEPRIRAZENO', 'AKTIVNI')
+  ```
+Systém nezavádí zbytečně složitý uživatelský dotazovací jazyk; filtry zůstávají přímočaré, jednoznačné a bezpečné.
+
+---
+
+### 28.9 Vyhledávání (Search Engine & Text Matching)
+
+Vyhledávání prostřednictvím parametru `search` slouží k rychlému nalezení relevantních úkolů:
+* **Výchozí prohledávaná pole:** `Task.title` (název úkolu) a `Task.description` (popis úkolu).
+* **Možná budoucí rozšíření:** `Area.name` (název oblasti), jméno Hlavního Řešitele či autora úkolu.
+
+#### Úrovně textové shody:
+1. **Exact Match (Přesná shoda):** Nalezení přesného řetězce včetně velkých/malých písmen či specifického číselného kódu.
+2. **Prefix / Substring:** Nalezení části slova či podřetězce (vhodné pro dynamické vyhledávání v reálném čase během psaní).
+3. **Full-text Search:** Jazykově pokročilejší vyhledávání s odstraněním diakritiky, tokenizací a relevančním řazením.
+
+Vyhledávání probíhá **vždy výhradně uvnitř Authorized Query Scope**. Konkrétní technologické řešení (databázový full-text, trigramy, dedikovaný search engine) zůstává otevřené pro budoucí implementaci.
+
+---
+
+### 28.10 Ochrana soukromí při vyhledávání (Search Privacy)
+
+Architektura stanovuje striktní bezpečnostní pravidlo:
+
+> [!CAUTION]
+> **Výsledek vyhledávání nesmí dokazovat existenci dat, ke kterým actor nemá oprávnění.**
+
+Důsledky pro návrh systému:
+1. **Zákaz úniků informací přes chybové stavy či počty:** Pokud neoprávněný uživatel provede dotaz na cizí Nástěnku, nesmí z chování API (ani z počtu výsledků `0` versus `404`) zjistit, zda daný výraz na Nástěnce existuje.
+2. **Ochrana před orákulem:** Vyhledávání nesmí fungovat jako orákulum pro zjišťování existence citlivých klíčových slov (např. neveřejných projektů, osobních jmen, finančních údajů).
+3. **Časová nezávislost (Timing Attacks):** Doba odezvy dotazu nesmí prozradit existenci dat mimo oprávněný rozsah uživatele.
+
+---
+
+### 28.11 Řazení dat a stabilní pořadí (Sorting & Stable Ordering)
+
+Klient nesmí předávat libovolné názvy sloupců z databáze. Řadit lze pouze podle schváleného seznamu povolených klíčů (**Whitelist**):
+
+#### Povolené řadicí klíče (`allowed_sort_fields`):
+* `created_at` – datum a čas vytvoření,
+* `updated_at` – datum a čas poslední změny,
+* `due_date` – termín splnění úkolu,
+* `priority` – priorita úkolu,
+* `status` – stav úkolu,
+* `title` – název úkolu,
+* `assignee` – řešitel úkolu.
+
+#### Povolené směry řazení (`allowed_sort_directions`):
+* `asc` – vzestupně,
+* `desc` – sestupně.
+
+#### Princip stabilního deterministického řazení
+Při stránkování je kritické, aby pořadí výsledků bylo absolutně deterministické. Pokud primární řadicí klíč obsahuje stejné hodnoty (např. více úkolů se stejnou prioritou nebo termínem), musí být automaticky aplikován sekundární a terciární klíč:
+
+```text
+Uživatelský požadavek:
+sort = priority, order = desc
+
+Interní deterministické řazení na backendu:
+ORDER BY priority DESC, created_at DESC, id DESC
+```
+
+Díky jednoznačnému tie-breakeru (`id DESC`) je vyloučeno náhodné přeskakování položek mezi stránkami při interním přeskupení plánovačem dotazů.
+
+---
+
+### 28.12 Modely stránkování (Pagination Models)
+
+Systém specifikuje dva přístupy ke stránkování:
+
+| Vlastnost | Offset Pagination (`page`, `limit`) | Cursor / Keyset Pagination (`cursor`, `limit`) |
+|---|---|---|
+| **Princip** | Přeskočení prvních $N$ řádků (`OFFSET N LIMIT M`) | Dotaz od poslední známé hodnoty klíče a ID (`WHERE (key, id) < (:last_key, :last_id)`) |
+| **Výhody** | Jednoduchost, možnost přímého skoku na libovolné číslo stránky | Dokonalá stabilita při změnách dat na pozadí, stabilní výkon $O(1)$ |
+| **Nevýhody** | Degradace výkonu při velkých datech ($O(N)$), nestabilita při souběžném vkládání/mazání | Nemožnost náhodného skoku na libovolnou stránku, pouze sekvenční procházení |
+| **Použití v systému** | Malé, statické administrativní seznamy | Dynamické seznamy (Tasky, Notifikace, Auditní záznamy) |
+
+---
+
+### 28.13 Doporučený model stránkování a souběžné změny
+
+V návaznosti na Step 11 architektura stanovuje:
+
+> [!NOTE]
+> **Doporučený model pro dynamické seznamy:**
+> Pro seznamy úkolů (`GET /boards/{boardId}/tasks`), notifikací (`GET /notifications`) a auditních logů je preferovaným modelem **Cursor / Keyset pagination**.
+
+#### Chování při souběžných změnách:
+1. **Vložení nového úkolu na pozadí:** Uživatel prohlíží 1. stránku. Jiný uživatel vytvoří nový úkol. Při vyžádání 2. stránky pomocí cursoru nedojde k posunu indexu ani k zobrazení duplicitní položky, kterou uživatel viděl na 1. stránce.
+2. **Smazání položky na pozadí:** Fyzicky smazaný úkol (`DELETE_TASK`) se již v žádné další stránce neobjeví.
+3. **Soft-delete Nástěnky:** Smazaná Nástěnka je automaticky vyloučena z dalších výpisů.
+4. **Neprolomitelnost autorizace:** Předaný `cursor` je kryptograficky bezpečný nebo validovaný stavový token a nesmí umožnit obejít Authorized Query Scope ani nahlédnout do cizích dat.
+
+---
+
+### 28.14 Limity a ochrana před přetížením (Rate & Limit Boundaries)
+
+Pro zajištění stability systému a ochrany před nechtěným přetížením či útoky DoS platí přísná pravidla:
+1. **Zákaz neomezeného čtení:** Žádný seznamový endpoint nesmí umožnit načtení neomezeného počtu záznamů bez stránkování.
+2. **Výchozí limit (`default limit`):** 25 položek na stránku (výchozí návrhová hodnota pro běžné zobrazení).
+3. **Maximální limit (`max limit`):** 100 položek na stránku (nepřekročitelná serverová bezpečnostní hranice).
+4. **Omezení vyhledávacího řetězce:** Maximální délka dotazu (např. 100 znaků) a minimální délka pro prefixové vyhledávání (např. 2–3 znaky).
+5. **Odmítnutí extrémních filtrů:** Požadavky s neplatným či překročeným limitem jsou buď automaticky zredukovány na maximum, nebo odmítnuty chybovým stavem `422 Unprocessable Entity`.
+
+---
+
+### 28.15 Sémantika výsledků, prázdné seznamy a validace
+
+Architektura přesně vymezuje sémantiku návratových kódů:
+
+#### Prázdné výsledky (Empty Results)
+* **Prázdný seznam není chyba:** Pokud uživatelský filtr (např. `status=archived`) nenalezne žádný úkol, server vrátí kód **`200 OK`** s prázdným polem položek (`items: []`).
+* **Zákaz mapování na 404:** Absence výsledků se NIKDY nesmí mapovat na `404 Not Found`. Kód `404` náleží výhradně situaci, kdy neexistuje samotná dotazovaná entita (např. Nástěnka `GET /boards/999/tasks`).
+
+#### Validace parametrů dotazu
+Server striktně validuje všechny vstupní parametry:
+* platnost hodnoty filtru vůči doménovým číselníkům (status, priorita),
+* číselnou integritu a existenci identifikátorů (Area ID, Assignee ID),
+* přítomnost řadicího klíče ve whitelistu,
+* směr řazení (`asc`, `desc`),
+* formát stránkovacího kurzoru a limity.
+
+Syntakticky poškozené dotazy vrací `400 Bad Request`. Sémanticky neplatné hodnoty filtrů vrací `422 Unprocessable Entity`.
+
+---
+
+### 28.16 Datová efektivita, N+1 problém a formát reprezentace
+
+Systém je navržen s důrazem na datovou efektivitu a prevenci známých výkonnostních úskalí:
+
+#### Zásada prevence N+1 dotazů
+> [!IMPORTANT]
+> **Čtecí vrstva nesmí při běžném seznamu Úkolů vyvolávat nekontrolované množství individuálních dotazů do databáze.**
+
+Při načtení stránky 25 úkolů nesmí systém provést 1 dotaz na úkoly + 25 dotazů na řešitele + 25 dotazů na oblasti + 25 dotazů na spoluřešitele. Data musí být načtena konsolidovaně (např. pomocí JOINů nebo dávkového načtení entit v jediné transakci).
+
+#### Rozlišení reprezentací:
+1. **List Representation (Seznamová reprezentace):**
+   * Optimalizovaná pro rychlé načtení a minimální přenos dat.
+   * Obsahuje pouze klíčové atributy pro zobrazení přehledu a karet: `id`, `title`, `status`, `priority`, `area_id`, `area_name`, `assignee_id`, `assignee_name`, `due_date`, `participants_count`, `version` (pro OCC).
+   * Neobsahuje dlouhý text popisu, binární přílohy ani kompletní auditní historii.
+2. **Detail Representation (Detailní reprezentace):**
+   * Načítá se až po explicitním otevření konkrétního úkolu.
+   * Zahrnuje kompletní popis (`description`), plný seznam spoluřešitelů, metadata příloh a historii změn.
+
+---
+
+### 28.17 Rozlišení Seznam vs. Detail entity (List vs. Detail Endpoint)
+
+Architektura striktně odděluje seznamové a detailní endpointy:
+* Seznam úkolů: `GET /boards/{boardId}/tasks`
+* Detail úkolu: `GET /tasks/{taskId}`
+
+Bezpečnostní pravidlo pro detail úkolu:
+> [!CAUTION]
+> **Detail endpoint musí znovu a nezávisle ověřit oprávnění.**
+> Nelze předpokládat: *„Když klient zná taskId, má automaticky právo na zobrazení detailu.“*
+
+Backend při požadavku na `GET /tasks/{taskId}` dohledá Nástěnku, do které úkol náleží, a prověří, zda má volající na této Nástěnce platné členství (`Membership`) nebo globální roli `ADMIN`. Pokud ne, přístup je okamžitě odepřen (`403 Forbidden` / `404 Not Found`).
+
+---
+
+### 28.18 Osobní a soukromý prostor uživatele (Personal Space Query Isolation)
+
+V návaznosti na princip oddělení týmového a osobního prostoru:
+1. **Přísná izolace domén:** Týmová Nástěnka a osobní pracovní prostor uživatele jsou zcela odděleny.
+2. **Zákaz prolínání dat:** Obecný dotaz na týmovou Nástěnku (`GET /boards/{boardId}/tasks`) nesmí nikdy vrátit soukromé záznamy, osobní poznámky či neveřejné koncepty uživatele.
+3. **Samostatné rozhraní:** Osobní prostor uživatele má vlastní vyhrazené rozhraní a přístup je vyhrazen pouze danému přihlášenému uživateli.
+
+---
+
+### 28.19 Seznam a načítání Notifikací (Notifications Listing)
+
+Endpoint:
+```http
+GET /notifications
+```
+
+V návaznosti na Step 10 platí pro notifikační seznam:
+1. **Striktní vlastnictví:** Uživatel má přístup výhradně ke svým vlastním notifikacím (`recipient_user_id == actor_user_id`). Přístup k cizím notifikacím je vyloučen.
+2. **Filtrování dle stavu:** Podpora filtrace dle stavu přečtení (`status = 'unread'` / `status = 'read'`).
+3. **Povinné stránkování:** Seznam je vždy stránkován (doporučeno keyset pagination).
+4. **Deterministické řazení:** Výchozí stabilní řazení dle času vytvoření sestupně s tie-breakerem:
+   ```text
+   ORDER BY created_at DESC, id DESC
+   ```
+
+---
+
+### 28.20 Datový tok: Search, Autorizace a Soft-Delete
+
+Kompletní architektonický datový tok dotazovací vrstvy:
+
+```text
+Authentication (Ověření platnosti session a identity Actora)
+      ↓
+Actor Context (Zjištění stavu účtu a globální role ADMIN)
+      ↓
+Authorization Scope (Omezení na Boardy s aktivním Membershipem)
+      ↓
+Exclude Deleted Data (Odfiltrování soft-deleted Boardů a neaktivních entit)
+      ↓
+Search (Vyhledávání řetězce v rámci povolených polí a oprávněného scope)
+      ↓
+Filters (Aplikace doménových filtrů: status, priority, area, assignee, due_date)
+      ↓
+Sort (Deterministické kompozitní řazení na základě whitelistovaných klíčů)
+      ↓
+Pagination (Aplikace limitu a keyset/offset stránkování)
+      ↓
+Response (Vrácení odlehčené seznamové reprezentace)
+```
+
+Databázový plánovač může fyzicky optimalizovat pořadí operací (např. využít složený index), avšak logický bezpečnostní význam zůstává nepřekročitelný: **nejdříve je vymezen bezpečný a autorizovaný rozsah dat**.
+
+---
+
+### 28.21 Caching a Stale Reads
+
+#### Zásady pro využití mezipaměti (Cache)
+* **Kde cache dává smysl:** Statická či málo proměnlivá metadata (globální číselníky, konfigurace systému, seznam základních oblastí).
+* **Kde je vyžadována maximální opatrnost:**
+  * Role a členství na Nástěnce (`Membership`) nesmí být cachovány způsobem, který by způsobil zpoždění při odebrání přístupu.
+  * Soukromá data, osobní prostor a notifikace nepodléhají sdílené mezipaměti.
+* **Hlavní pravidlo cache:**
+  > [!IMPORTANT]
+  > **Mezipaměť (Cache) nesmí nikdy obejít ani oslabit aktuální autorizační kontrolu.**
+
+#### Rozlišení Stale Read a Stale Write (Vazba na Step 11)
+* **Stale Read (Čtení staršího stavu):** V distribuovaném či souběžném prostředí může klient na zlomek sekundy zobrazit stav, který byl těsně předtím na pozadí změněn. V běžném rozhraní je tento jev akceptovatelný (a může být aktualizován doménovými událostmi).
+* **Stale Write (Zápis na základě starého stavu):** Pokud se uživatel pokusí provést změnu nad daty, která mezitím někdo jiný upravil, systém zápis striktně zablokuje mechanismem OCC s chybou `409 Conflict`.
+
+---
+
+### 28.22 Struktura odpovědi a celkový počet (Result Structure & Total Count)
+
+#### Návrh struktury odpovědi (Cursor Pagination):
+```json
+{
+  "items": [
+    {
+      "id": "tsk_01H...",
+      "title": "Dokončit inventuru",
+      "status": "V_RESENI",
+      "priority": "VYSOKA",
+      "area_id": "are_01H...",
+      "area_name": "Prodejna",
+      "assignee_id": "usr_01H...",
+      "assignee_name": "Milan",
+      "due_date": "2026-09-25",
+      "version": 4
+    }
+  ],
+  "pagination": {
+    "next_cursor": "eyJkdWVfZGF0ZSI6IjIwMjYtMDktMjUiLCJpZCI6InRza18wMUh..."}
+    "has_more": true
+  }
+}
+```
+
+#### Pravidlo k celkovému počtu záznamů (`total count`)
+> [!NOTE]
+> **Celkový počet záznamů (`total`) nemusí být automaticky vracen u každého stránkovaného dotazu.**
+
+Výpočet `COUNT(*)` nad rozsáhlou a dynamicky filtrovanou tabulkou je pro databázi výpočetně náročný. Pro běžný plynulý průchod seznamem (infinite scroll či tlačítko „Další“) plně postačují hodnoty `has_more` a `next_cursor`. Pokud je přesný součet nezbytný (např. pro manažerský přehled), je řešen dedikovaným dotazem.
+
+---
+
+### 28.23 Zabezpečení dotazovacího rozhraní (Query Security & Whitelisting)
+
+Systém uplatňuje striktní zásady zabezpečení dotazů proti injektážím a zneužití:
+* **Zákaz klientských výrazů:** Klient nesmí předávat libovolné databázové výrazy, fragmenty SQL, názvy interních tabulek ani libovolné WHERE podmínky.
+* **Serverový Whitelist:** Veškeré filtry a řadicí klíče jsou mapovány výhradně na předem schválené bezpečné seznamy (`allowed_filters`, `allowed_sort_fields`, `allowed_sort_directions`).
+* **Typová kontrola:** Každý parametr je před sestavením interního dotazu validován na očekávaný datový typ.
+
+---
+
+### 28.24 Soulad se Step 5 až Step 11
+
+Navržená architektura čtení a práce s daty je v plném a striktním souladu se všemi předchozími architektonickými kroky:
+* **User (Step 6, 8, 9):** Čtení je umožněno pouze aktivnímu uživateli (`is_active = true`); deaktivovaný uživatel neobdrží žádná data.
+* **Membership a Role (Step 5, 6, 7):** Hranice Nástěnky a role `OWNER`, `MANAGER`, `MEMBER` deterministicky vymezují Authorized Query Scope.
+* **Board (Step 6, 7, 8):** Soft-deleted Nástěnka je automaticky vyloučena z běžných dotazů; přístup k ní je zablokován.
+* **Area (Step 6, 7, 8):** Patří výhradně dané Nástěnce; smazané oblasti se nezobrazují a vylučují úniky.
+* **Task a TaskParticipant (Step 6, 7, 8):** Úkoly a spoluřešitelé jsou načítáni v rámci transakčních a dávkových hranic zabraňujících N+1 dotazům.
+* **AuditLog (Step 7, 8, 10, 11):** Auditní záznamy jsou přístupné pouze přes dedikované autorizované rozhraní.
+* **Notification (Step 10):** Přísně personalizovaný výpis přístupný výhradně adresátovi.
+* **Session a Actor (Step 9):** Každý požadavek transparentně identifikuje `actor_user_id` pro bezpečné vyhodnocení scopu.
+* **Concurrency a Version (Step 11):** Seznamová reprezentace vrací číslo verze (`version`), čímž připravuje podklady pro následný bezpečný zápis chráněný OCC.
+
+---
+
+### 28.25 Závazné invarianty Step 12
+
+Architektura vyhledávání, filtrování, řazení, stránkování a práce s daty garantuje dodržení následujících dvaceti dvou invariantů:
+
+1. **Každý read request je autorizovaný:** Neexistuje anonymní ani neautorizovaný přístup k datům; každé čtení podléhá ověření identity a práv.
+2. **Frontend není bezpečnostní filtr:** Bezpečnostní hranice dat je definována výhradně na backendu; filtrování v UI má pouze ergonomický význam.
+3. **Authorization scope je vytvořen na serveru:** Server sestavuje maximální povolený dataset před aplikací uživatelských filtrů.
+4. **Search probíhá pouze v oprávněném scope:** Vyhledávání nesmí prohledávat ani prozradit data mimo autorizovaný rozsah dané Nástěnky.
+5. **Filter nemůže rozšířit authorized scope:** Žádná kombinace parametrů filtru nemůže zpřístupnit data z jiné Nástěnky či cizího osobního prostoru.
+6. **Sort používá pouze whitelistovaná pole:** Řazení je dovoleno pouze podle předem schválených a bezpečných klíčů.
+7. **Klient nemůže poslat libovolný query / SQL výraz:** Přímé předávání SQL fragmentů či libovolných WHERE podmínek z klienta je striktně zakázáno.
+8. **List endpointy jsou stránkované:** Všechny seznamové endpointy povinně implementují stránkování; neexistuje neomezený výpis záznamů.
+9. **Server omezuje maximální limit:** Server vynucuje nepřekročitelnou horní hranici počtu vrácených položek na jednu stránku.
+10. **Stránkované pořadí je deterministické:** Každé řazení povinně obsahuje sekundární a terciární unikátní klíče pro zaručení stability pořadí.
+11. **Dynamická data preferují stabilní cursor/keyset pagination:** Pro často aktualizované seznamy (úkoly, notifikace) je upřednostněno keyset stránkování.
+12. **Stale read není totéž co stale write:** Zobrazení mírně staršího stavu při čtení je tolerováno, avšak zápis na základě zastaralého stavu je vždy zablokován (OCC).
+13. **Hard-deleted objekty se nemohou objevit v nových výsledcích:** Fyzicky smazaný objekt je okamžitě nedostupný pro jakékoliv navazující stránkovací dotazy.
+14. **Soft-deleted Board není běžně vracen:** Logicky smazaná Nástěnka je automaticky vyloučena z běžných seznamů Nástěnek.
+15. **Detail endpoint znovu ověřuje authorization:** Přístup na detail entity vyžaduje plnohodnotné ověření práv; znalost ID nestačí.
+16. **Osobní data nejsou součástí týmových query bez explicitního oprávnění:** Osobní pracovní prostor uživatele je striktně izolován od týmové Nástěnky.
+17. **Uživatel vidí pouze vlastní Notification:** Dotaz na notifikace vrací výhradně záznamy určené přihlášenému příjemci.
+18. **Cache nesmí obejít autorizaci:** Mezipaměť nesmí způsobit zobrazení neautorizovaných dat ani prodloužit platnost odebraných práv.
+19. **Prázdný seznam není automaticky chyba:** Absence odpovídajících dat vrací kód HTTP 200 s prázdným polem, nikoliv chybový stav 404.
+20. **Neexistující resource a prázdné výsledky jsou rozlišeny:** Neexistence Nástěnky (404) je striktně odlišena od prázdného seznamu jejích úkolů (200 OK s prázdným polem).
+21. **List response nevrací automaticky zbytečná detailní data:** Seznamový endpoint vrací odlehčenou reprezentaci pro minimalizaci přenosu a ochranu soukromí.
+22. **Query API nesmí umožnit nekontrolované zatížení systému:** Délka vyhledávacích řetězců, limity stránek a struktura filtrů jsou chráněny proti přetížení a zneužití.
+
+---
+
+### 28.26 Rozhodnutí odložená do implementační fáze
+
+Následující technologická a implementační rozhodnutí **nejsou v tomto architektonickém kroku schválena ani závazně vybrána** a jejich volba je záměrně odložena do navazující implementační fáze:
+* **Konkrétní query builder / ORM framework:** Volba konkrétní knihovny pro sestavování databázových dotazů.
+* **Konkrétní full-text search engine:** Výběr konkrétní technologie pro plnotextové vyhledávání (databázové indexy PostgreSQL tsvector, SQLite FTS5, externí engine apod.).
+* **Databázové indexy:** Přesná podoba kompozitních, částečných či pokrývajících indexů pro jednotlivé kombinace filtrů.
+* **Formát kódování cursoru:** Způsob serializace kurzorového tokenu (např. Base64 encoded JSON, kryptograficky podepsaný token).
+* **Konkrétní knihovny pro pagination:** Volba specifických programových modulů pro obsluhu stránkování.
+* **Konkrétní cache engine:** Výběr technologie mezipaměti (např. Redis, Memcached či in-memory cache).
+* **Implementace rate limiting:** Konkrétní algoritmy (Token Bucket, Leaky Bucket) a limity počtu dotazů za časovou jednotku.
+* **Normalizace vyhledávání:** Specifická pravidla pro odstraňování diakritiky, transformaci velkých/malých písmen a transliteraci.
+* **Podpora fuzzy vyhledávání:** Způsob implementace tolerantního vyhledávání s překlepy (Levenshtein, trigramy).
+* **Algoritmy pro relevance ranking:** Přesná matematická formulace vah a hodnocení relevance výsledků hledání.
+* **Materializované pohledy (Materialized Views):** Případné využití předpočítaných agregací pro náročné analytické pohledy.
+* **Čtecí repliky (Read Replicas):** Případné oddělení čtecí a zápisové databázové vrstvy pro vysokou zátěž.
+* **Monitoring a profilování výkonu query:** Konkrétní nástroje APM a metriky pro sledování pomalých dotazů (slow query logs).
+
+> [!NOTE]
+> Step 12 definuje logickou a bezpečnostní architekturu práce s daty. Konkrétní knihovny, frameworky a úložné systémy budou zvoleny až v navazujících technických krocích.
+
+---
+
+## 29. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -3959,3 +4505,4 @@ Následující technologická a implementační rozhodnutí **nejsou v tomto arc
 | **0.7.0** | 19. 9. 2026 | Step 9 – Autentizace, identity, session, životní cyklus přihlášení, ochrana identity Actor a oddělení autentizace od autorizace. | Antigravity / Product Owner |
 | **0.8.0** | 19. 9. 2026 | Step 10 – Doménové události, systémové reakce, notifikační model, recipient policy, spolehlivé předávání událostí, idempotence a oddělení Event / Notification / Audit. | Antigravity / Product Owner |
 | **0.9.0** | 19. 9. 2026 | Step 11 – Souběžný přístup, optimistic concurrency control, stale data, race conditions, konflikty změn, idempotence, retry a transakční konzistence. | Antigravity / Product Owner |
+| **1.0.0** | 19. 9. 2026 | Step 12 – Vyhledávání, filtrování, řazení, stránkování, autorizovaný query scope, stabilní pořadí, výkonové hranice a bezpečné čtení dat. | Antigravity / Product Owner |
