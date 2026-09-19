@@ -2,11 +2,12 @@ import "server-only";
 import postgres from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { getEnv } from "../configuration/index.ts";
+import * as schema from "../../database/schema/index.ts";
 
 /**
- * Typ reprezentující Drizzle instanci napojenou na PostgreSQL přes postgres.js.
+ * Typ reprezentující Drizzle instanci napojenou na PostgreSQL se schématem.
  */
-export type Database = PostgresJsDatabase;
+export type Database = PostgresJsDatabase<typeof schema>;
 
 declare global {
   // Globální reference pro znovupoužití spojení během Next.js development hot-reloadingu
@@ -15,7 +16,7 @@ declare global {
 }
 
 /**
- * Vrací singleton instanci Drizzle ORM klienta napojeného na PostgreSQL.
+ * Vrací singleton instanci Drizzle ORM klienta napojeného na PostgreSQL se schématem.
  * Inicializace je striktně líná (lazy) – k připojení dochází až při prvním volání,
  * čímž je chráněn Next.js statický build před selháním bez živé databáze.
  *
@@ -43,7 +44,7 @@ export function getDb(): Database {
     globalThis.__nastenka_pg_client = client;
   }
 
-  const db = drizzle(client);
+  const db = drizzle(client, { schema });
 
   if (env.NODE_ENV !== "production") {
     globalThis.__nastenka_drizzle_db = db;
