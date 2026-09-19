@@ -1,0 +1,5 @@
+# Basic Nastenka ignores
+*.log
+.tmp/
+__pycache__/
+.DS_Store
