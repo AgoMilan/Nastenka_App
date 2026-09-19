@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 1.1.0<br>
+**Verze:** 1.2.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -5146,7 +5146,777 @@ Následující technologická a grafická rozhodnutí **nejsou v tomto architekt
 
 ---
 
-## 31. Historie verzí
+## 32. Step 14 – Technická architektura aplikace, vrstvy a odpovědnosti
+
+Tato kapitola definuje celkovou technickou architekturu systému Nástěnka. Stanovuje striktní rozdělení do logických vrstev, definuje jejich odpovědnosti, směr přípustných závislostí, transakční hranice, toky dat, model událostí (Outbox Pattern), oddělení doménového a persistenčního modelu a zásady testovatelnosti. Cílem je jednoznačně popsat, **z jakých částí je aplikace sestavena, jak mezi sebou komunikují a kdo za co odpovídá**, při zachování plné technologické neutrality.
+
+---
+
+### 32.1 Cíl a technický rozsah Step 14
+
+Technická architektura systému jednoznačně odpovídá na 20 klíčových strukturálních otázek:
+1. **Hlavní technické vrstvy:** Prezentační (Frontend), Přenosová (API/Transport), Autentizační, Autorizační, Aplikační (Application Services), Doménová (Domain Layer), Persistenční (Repository) a Databázová vrstva.
+2. **Odpovědnost vrstev:** Každá vrstva má striktně vymezenou a nepřekročitelnou odpovědnost (Single Responsibility).
+3. **Směr závislostí:** Závislosti směřují výhradně shora dolů směrem k doméně nebo jsou invertovány pomocí rozhraní (Dependency Inversion). Doména nezávisí na infrastruktuře.
+4. **Místo autentizace:** Samostatná autentizační vrstva zpracovávající relaci a sestavující serverový `ActorContext`.
+5. **Místo autorizace:** Nezávislá autorizační vrstva vyhodnocující kontext uživatele, globální roli a roli na Nástěnce.
+6. **Umístění aplikačních služeb:** Aplikační vrstva (Application Services / Use Cases) koordinující aplikační toky.
+7. **Umístění doménových pravidel:** Doménová vrstva (Domain Entities, Value Objects, Domain Services) izolovaná od technologií.
+8. **Umístění transakcí:** Transakční hranice je řízena na pomezí aplikační a persistenční vrstvy; UI nikdy neřídí transakce.
+9. **Persistenční operace:** Repozitářová vrstva (Repository Pattern) abstrahující ukládání a načítání dat.
+10. **Vznik doménových událostí:** Uvnitř doménové vrstvy jako reprezentace úspěšně potvrzených změn stavu.
+11. **Fungování Outboxu:** Transakční Outbox v rámci stejné databázové transakce jako doménová změna pro spolehlivou publikaci událostí.
+12. **Vznik notifikací:** Asynchronní Notification Service reagující na committed doménové události.
+13. **Vznik AuditLogu:** Transakční zápis do AuditLogu v rámci aplikačního use case pro povinně auditované operace.
+14. **Komunikace klienta se serverem:** Výhradně přes definované rozhraní API / Transport vrstvy (HTTPS / JSON DTO).
+15. **Zákaz přímého přístupu klienta k databázi:** Zamezení prolomení bezpečnostních, validačních a autorizačních hranic.
+16. **Oddělení Domain Modelu od Persistence Modelu:** Čisté doménové objekty vs. relační/technické databázové struktury.
+17. **Oddělení UI Modelu od API Modelu:** Formulářové stavy klienta vs. transportní DTO rozhraní serveru.
+18. **Řešení chyb napříč vrstvami:** Deterministické mapování doménových výjimek na transportní stavové kódy.
+19. **Testování jednotlivých vrstev:** Izolované jednotkové testy domény, integrační testy repozitářů a aplikační testy use cases.
+20. **Prevence prorůstání technologií:** Využití rozhraní, adaptérů a protikorupčních hranic (Anti-Corruption Layer).
+
+---
+
+### 32.2 Referenční technický model a toky dat
+
+Hlavní synchronní tok zpracování požadavku (Command Path):
+
+```text
+Browser / Mobile Client (Uživatelské rozhraní)
+          ↓
+Presentation / Frontend (Správa UI stavu, lokální validace)
+          ↓
+API / Transport Layer (Příjem HTTP požadavku, DTO validace)
+          ↓
+Authentication Layer (Ověření relace ──► sestavení ActorContext)
+          ↓
+Authorization Layer (Kontrola oprávnění: Global Role, Membership Role)
+          ↓
+Application Layer (Orchestrace use case, transakční řízení)
+          ↓
+Domain Layer (Aplikace doménových pravidel, invarianty, vytvoření události)
+          ↓
+Persistence / Repository Layer (Uložení změněného stavu a Outbox záznamu)
+          ↓
+Database (Garantovaná ACID transakce)
+```
+
+Vedlejší asynchronní a auditní toky systému:
+
+```text
+               Úspěšná doménová operace
+                         ↓
+               Zahájení DB transakce
+                         ↓
+          ┌──────────────┴──────────────┐
+          ▼                             ▼
+   Uložení změn entity           Zápis do Outboxu
+          │                             │
+          └──────────────┬──────────────┘
+                         ▼
+             COMMIT Databázové transakce
+                         │
+        ┌────────────────┴────────────────┐
+        ▼                                 ▼
+Asynchronní Outbox Processor       Zápis do AuditLogu
+        ↓                          (součást kritických operací)
+Publikace doménové události
+        ↓
+Notification Service & reakce
+```
+
+---
+
+### 32.3 Prezentační vrstva (Presentation / Frontend Layer)
+
+Odpovědnost klientské vrstvy:
+* **Prezentace a interakce:** Vykreslení uživatelského rozhraní na základě dat ze serveru a zachycení interakcí uživatele.
+* **Správa UI stavu:** Uchovávání dočasného stavu formulářů, rozbalených nabídek, aktivních filtrů a stránkování.
+* **Ergonomická validace:** Okamžitá kontrola formátu vstupů pro rychlou zpětnou vazbu uživateli.
+* **Zpracování odpovědí:** Prezentace stavů načítání, prázdných seznamů, chybových hlášení a řešení konfliktů verzí (`409 Conflict`).
+
+> [!CAUTION]
+> **Zákaz bezpečnostní autority:** Frontend NESMÍ být autoritou pro:
+> * autentizaci a platnost session,
+> * autorizaci a vyhodnocování rolí (`ADMIN`, `OWNER`, `MANAGER`, `MEMBER`),
+> * vlastnictví Nástěnky ani řešitelskou odpovědnost,
+> * generování čísla verze (`version`) pro concurrency control,
+> * přímé dotazování databáze.
+
+---
+
+### 32.4 Přenosová vrstva rozhraní (API / Transport Layer)
+
+Přenosová vrstva zajišťuje komunikaci mezi klientem a aplikačním jádrem:
+* **Příjem a serializace požadavků:** Přijímá HTTP požadavky a parsuje transportní formát (JSON).
+* **Transportní validace:** Kontroluje syntaktickou správnost payloadu, přítomnost povinných polí a základní datové typy.
+* **Mapování kontextu:** Extrahuje autentizační tokeny a předává řízení navazujícím vrstvám.
+* **Předání do aplikační vrstvy:** Volá příslušnou aplikační službu (Use Case Handler).
+* **Transformace odpovědi:** Přeformátuje doménový/aplikační výsledek do výstupního DTO a mapuje chyby na HTTP stavové kódy.
+
+```text
+Controller / Route Handler  ──►  Application Service  ──►  Domain
+```
+
+> [!IMPORTANT]
+> Přenosová vrstva nesmí obsahovat doménovou byznys logiku ani přímé SQL dotazy do databáze.
+
+---
+
+### 32.5 Autentizační vrstva (Authentication Layer)
+
+V návaznosti na Step 9 zajišťuje autentizační vrstva bezpečné určení identity volajícího:
+* **Ověření identity:** Zpracovává autentizační token nebo session cookie a ověřuje platnost relace v úložišti.
+* **Kontrola stavu účtu:** Ověřuje, zda uživatel není deaktivován (`User.is_active = true`, `deleted_at IS NULL`).
+* **Sestavení kontextu Actora (`ActorContext`):** Vytváří neměnný serverový objekt obsahující:
+  * `actor_user_id` – jednoznačný identifikátor přihlášeného uživatele,
+  * `session_id` – identifikátor aktuální relace,
+  * `global_role` – globální systémová role (`ADMIN` nebo běžný uživatel).
+
+Autentizační vrstva **nerozhoduje o oprávnění k operacím nad konkrétní Nástěnkou**; jejím úkolem je výhradně garantovat, kdo je volající.
+
+---
+
+### 32.6 Autorizační vrstva (Authorization Layer)
+
+V návaznosti na Step 5 a Step 7 provádí autorizační vrstva bezpečnostní vyhodnocení:
+* **Vstupní parametry:** `ActorContext`, identifikátor cílové Nástěnky (`board_id`), typ požadované operace (`OperationType`), případně cílový objekt (např. `Task`).
+* **Vyhodnocovací mechanismus:**
+  1. Kontrola globální role `ADMIN` (pokud jde o administrativní zásah).
+  2. Dohledání aktivního členství (`Membership`) uživatele na dané Nástěnce.
+  3. Ověření role na Nástěnce (`OWNER`, `MANAGER`, `MEMBER`) vůči autorizační matici operace.
+  4. Kontrola specifických objektových pravidel (např. zda je uživatel Hlavním řešitelem při odebírání spoluřešitele).
+* **Výsledek:** Povolení operace nebo okamžité zamítnutí s vyvoláním autorizační chyby (`403 Forbidden`).
+
+---
+
+### 32.7 Aplikační vrstva (Application Layer & Use Case Orchestration)
+
+Aplikační vrstva představuje řídicí centrum konkrétních případů užití (Use Cases):
+* **Orchestrace toku:** Přijímá příkaz z API vrstvy společně s `ActorContext`.
+* **Zajištění autorizace:** Deleguje ověření práv na Autorizační vrstvu.
+* **Správa transakcí:** Otevírá a uzavírá databázovou transakci (Unit of Work).
+* **Načítání a ukládání přes Repozitáře:** Získává doménové agregáty z repozitářů a po úpravě je ukládá.
+* **Aktivace doménové logiky:** Volá metody na doménových entitách nebo doménových službách.
+* **Zápis Auditu a Outboxu:** Do téže transakce připojuje zápis do `AuditLogu` a záznam do `Outboxu`.
+
+#### Příklady koncepčních aplikačních služeb (Use Cases):
+* `CreateBoardUseCase` – vytvoření Nástěnky a atomické přiřazení prvního člena jako `OWNER`.
+* `TransferOwnershipUseCase` – kritický převod vlastnictví s přísnou transakční izolací.
+* `CreateTaskUseCase` – vytvoření úkolu v rámci oblasti s nastavením verze a auditu.
+* `AssignTaskUseCase` – změna Hlavního řešitele s verifikační kontrolou OCC.
+* `DeleteTaskUseCase` – řízené smazání úkolu s ověřením potvrzení `SMAZAT`.
+* `DeleteAreaUseCase` – kaskádové smazání oblasti a navázaných úkolů.
+
+---
+
+### 32.8 Doménová vrstva (Domain Layer & Core Business Logic)
+
+Srdce systému Nástěnka obsahující čistou byznys logiku nezávislou na okolním světě:
+* **Doménové entity a agregáty:** `User`, `Board`, `Membership`, `Area`, `Task`, `TaskParticipant`.
+* **Doménové hodnoty (Value Objects):** `Email`, `TaskStatus`, `Priority`, `Role`, `Version`.
+* **Doménové invarianty:** Přísná vnitřní pravidla, která entita nikdy nedovolí porušit (např. úkol nemůže existovat bez oblasti, Nástěnka musí mít právě jednoho Ownera).
+* **Čistota modelu:** Doménová vrstva **nesmí obsahovat žádné závislosti** na HTTP frameworku, webovém serveru, databázových ovladačích, konkrétním ORM ani formátech JSON/XML.
+
+---
+
+### 32.9 Doménové služby (Domain Services)
+
+Doménová služba vzniká výhradně tehdy, pokud pravidlo logicky náleží do domény, avšak přesahuje hranice jediné entity:
+* **Kritéria pro zavedení:** Koordinace invariantů mezi více entitami (např. `Board` a `Membership`).
+* **Příklady odůvodněných doménových služeb:**
+  * `OwnershipTransferDomainService` – garantuje atomickou výměnu rolí a splnění Invariantu 1 (právě jeden platný Owner).
+  * `MembershipRoleDomainService` – kontroluje limit maximálně jednoho Managera při povyšování člena.
+  * `TaskAssignmentDomainService` – ověřuje členství přiřazovaného řešitele na dané Nástěnce.
+* **Pravidlo:** Doménové služby se nevytvářejí mechanicky 1:1 k databázovým tabulkám.
+
+---
+
+### 32.10 Repozitářová vrstva (Repository Layer)
+
+Repozitář představuje rozhraní pro persistenční operace nad doménovými objekty:
+* **Abstrakce databáze:** Poskytuje aplikační vrstvě iluzi práce s paměťovou kolekcí doménových objektů (`findById`, `save`, `delete`, `findByBoardId`).
+* **Klíčová repozitářová rozhraní:**
+  * `UserRepository`, `BoardRepository`, `MembershipRepository`,
+  * `AreaRepository`, `TaskRepository`, `NotificationRepository`, `AuditRepository`.
+* **Zákaz autorizačního rozhodování:** Repozitář neověřuje, zda má uživatel právo úkol smazat; repozitář pouze provede technické uložení nebo odstranění v rámci transakce.
+
+---
+
+### 32.11 Doménový model vs. Persistenční model (Domain vs. Persistence Model)
+
+Architektura striktně odděluje reprezentaci chování od reprezentace uložení:
+* **Doménový model (Domain Model):** Zaměřen na invarianty, validitu stavových přechodů a zapouzdření byznys pravidel. Používá doménové typy.
+* **Persistenční model (Persistence Model):** Zaměřen na relační integritu, cizí klíče, tabulkové sloupce, indexy a optimalizaci SQL dotazů.
+* **Oddělení vrstev:** Doménová entita není pouhou „přepravkou na data“ (anemic model) zrcadlící tabulku. Změny v databázovém schématu (např. rozdělení tabulky) nesmí vynucovat změnu doménové logiky.
+
+---
+
+### 32.12 API Model vs. Doménový model (DTO vs. Domain Model)
+
+Striktní oddělení rozhraní pro komunikaci s klientem od vnitřního doménového modelu:
+* **Data Transfer Objects (DTO):** Přenášejí pouze data potřebná pro konkrétní operaci. Formát je optimalizován pro síťový přenos a ergonomii klienta (např. `CreateTaskRequestDTO`, `TaskListResponseDTO`).
+* **Prevence úniku dat (Data Leakage):** Doménové objekty ani interní databázové řádky se nikdy neposílají přímo do odpovědi API.
+* **Minimální seznamová reprezentace:** Seznamové DTO neobsahují detailní texty popisu ani celou historii úkolu (Step 12).
+
+---
+
+### 32.13 Čtyřúrovňová validace dat (Validation Architecture)
+
+Data procházejí čtyřstupňovým validátorem na různých úrovních systému:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Transportní validace (API Layer)                         │
+│    - Syntaxe JSON, základní typy, povinná pole, omezení     │
+├─────────────────────────────────────────────────────────────┤
+│ 2. Aplikační validace (Application Layer)                   │
+│    - Existence objektů, platnost ActorContext, verze OCC    │
+├─────────────────────────────────────────────────────────────┤
+│ 3. Doménová validace (Domain Layer)                         │
+│    - Invarianty, platnost stavových přechodů, pravidla      │
+├─────────────────────────────────────────────────────────────┤
+│ 4. Databázová integrita (Database Constraints)              │
+│    - Cizí klíče, NOT NULL, UNIQUE(user_id, board_id)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Tento model navazuje na Step 8 a zaručuje, že neplatná data jsou zachycena co nejdříve, zatímco databáze tvoří nepřekročitelnou poslední linii obrany.
+
+---
+
+### 32.14 Transakční hranice (Transaction Boundaries)
+
+Transakce jsou řízeny výhradně na aplikační úrovni:
+* **Zahájení transakce:** Application Service otevírá transakci před načtením dat vyžadujících kontrolu konzistence.
+* **Rozsah transakce:** V rámci jediné transakce proběhne:
+  1. Načtení dat a ověření verze (OCC),
+  2. Provedení doménové operace,
+  3. Uložení upravených entit přes repozitáře,
+  4. Zápis do `AuditLogu` (je-li operace auditovaná),
+  5. Uložení události do tabulky `Outbox`.
+* **Commit:** Atomické potvrzení všech změn. V případě jakékoliv chyby následuje kompletní `ROLLBACK`.
+* **Zákaz transakcí v UI:** Klientská vrstva ani API kontrolery nesmí přímo manipulovat s transakcemi.
+
+---
+
+### 32.15 Vzor Unit of Work (Unit of Work Pattern)
+
+Pro operace zasahující více agregátů současně uplatňuje systém vzor **Unit of Work**:
+* **Účel:** Sdružuje změny nad více repozitáři do jediné transakční jednotky.
+* **Použití u kritických operací:**
+  * `CREATE_BOARD` (zápis Nástěnky + zápis prvního člena s rolí `OWNER` + výchozí oblasti).
+  * `TRANSFER_OWNERSHIP` (aktualizace původního Ownera + aktualizace nového Ownera).
+  * `DELETE_AREA` (kaskádové odstranění oblasti, všech jejích úkolů, účastníků a týmových příloh).
+* **Garantovaný výsledek:** Buď proběhnou všechny zápisy, nebo žádný.
+
+---
+
+### 32.16 Vrstva řízení souběhu (Concurrency Layer & OCC)
+
+V návaznosti na Step 11 systém integruje Optimistic Concurrency Control (OCC):
+* **Kontrakt řízení souběhu:**
+  ```text
+  Klient odesílá: { id, expected_version, changes }
+         ↓
+  Application Service načte aktuální entitu
+         ↓
+  Ověření: aktuální entity.version == expected_version
+         ├── NESHODA ──► Okamžitý ROLLBACK a vrácení HTTP 409 Conflict
+         └── SHODA   ──► Entita aktualizována, version inkrementována (version + 1), COMMIT
+  ```
+* **Zákaz tichého přepisu:** Strategie Last-Write-Wins je vyloučena; souběh vždy vyvolá konflikt.
+
+---
+
+### 32.17 Vrstva doménových událostí (Domain Event Layer)
+
+V návaznosti na Step 10:
+* **Význam události:** Doménová událost reprezentuje fakt, který v doméně již nastal (minulý čas, např. `TASK_CREATED`, `TASK_ASSIGNED`).
+* **Podmínka publikace:** Událost je publikována **výhradně po úspěšném commitu** transakce.
+* **Oddělení konceptů:** Doménová událost není notifikace ani auditní záznam; je to interní zpráva o změně stavu.
+
+---
+
+### 32.18 Vzor Outbox pro spolehlivou distribuci událostí (Transactional Outbox)
+
+Pro garantované doručení událostí bez nutnosti distribuovaných dvoufázových transakcí (2PC):
+
+```text
+Databázová transakce:
+├── 1. Provedení změn v provozních tabulkách (Task, Board...)
+└── 2. Zápis události do tabulky Outbox (OutboxEvent)
+        └── COMMIT TRANSAKCE
+                  │
+                  ▼
+Asynchronní Outbox Processor (Worker)
+├── Čtení nezpracovaných událostí z Outbox tabulky
+├── Předání do interního odbavovače / fronty
+└── Označení události v Outboxu jako zpracované (processed_at)
+```
+
+Tento mechanismus eliminuje riziko, že by doménová změna byla uložena, ale událost ztracena při výpadku sítě.
+
+---
+
+### 32.19 Notifikační služba (Notification Service)
+
+Nezávislá aplikační komponenta obsluhující uživatelská upozornění (Step 10):
+* **Reakce na události:** Naslouchá na publikované doménové události z Outboxu.
+* **Recipient Policy:** Vyhodnocuje pravidla pro určení adresátů (např. nový řešitel při přiřazení úkolu).
+* **Generování notifikací:** Vytváří záznamy v tabulce `Notification` pro konkrétní uživatele.
+* **Ochrana soukromí:** Ověřuje, že notifikace neobsahuje citlivá data, ke kterým příjemce nemá přístup.
+* **Zákaz zpětného zápisu:** Notifikační služba nikdy nemění původní doménový stav úkolu ani Nástěnky.
+
+---
+
+### 32.20 Auditní služba (Audit Service)
+
+Komponenta zajišťující neměnnou auditní stopu systému (Step 7, 8, 10):
+* **Povinné auditování:** Zaznamenává citlivé a destruktivní operace (`TRANSFER_OWNERSHIP`, `CHANGE_MANAGER`, `DELETE_TASK`, `DELETE_AREA`).
+* **Struktura auditního záznamu:** `actor_user_id`, `timestamp`, `board_id`, `operation_type`, `target_id`, `previous_state`, `new_state`.
+* **Striktní bezpečnost:** Do auditu se nikdy nezapisují hesla, tokeny ani bezpečnostní klíče.
+* **Append-only charakter:** Záznamy v `AuditLogu` jsou neměnné a zůstávají zachovány i po fyzickém odstranění cílové entity.
+
+---
+
+### 32.21 Architektura čtení a koncepce CQRS (Read Architecture & CQRS Boundary)
+
+Systém uplatňuje koncepční oddělení zápisové a čtecí cesty (Command Query Responsibility Segregation) bez nutnosti zavádění extrémních technologií:
+
+```text
+COMMAND PATH (Změna stavu):
+API ──► Authz ──► Application Service ──► Domain Aggregate ──► Tx Commit ──► Outbox
+
+QUERY PATH (Čtení dat):
+API ──► Authz Scope ──► Query Service / Optimized Projection ──► DTO Response
+```
+
+* **Výhoda pro výkon:** Čtecí dotazy (např. vyhledávání v seznamu úkolů dle Step 12) nemusí rekonstruovat kompletní doménové entity se všemi metodami a invarianty, ale mohou načítat odlehčené projekce přímo z databáze.
+* **Garantovaná bezpečnost:** I čtecí cesta striktně prochází přes **Authorized Query Scope**.
+
+---
+
+### 32.22 Hranice klíčových aplikačních služeb (Service Boundaries)
+
+Architektura definuje hranice služeb na základě odpovědnosti a případů užití:
+
+| Služba | Hlavní odpovědnost |
+|---|---|
+| `AuthenticationService` | Správa přihlášení, ověřování hesla, správa session tokenů. |
+| `AuthorizationService` | Vyhodnocování oprávnění Actora vůči Nástěnce a doménovým operacím. |
+| `BoardService` | Životní cyklus Nástěnky, správa metadat, archivace, soft-delete. |
+| `MembershipService` | Přidávání/odebírání členů, jmenování Managera, převod vlastnictví. |
+| `TaskService` | Vytváření úkolů, přiřazování řešitelů, změny stavů a termínů, řízené smazání. |
+| `AreaService` | Správa organizačních oblastí Nástěnky a jejich řízené smazání. |
+| `SearchQueryService` | Optimalizované čtení, vyhledávání, filtrování a řazení dle Step 12. |
+| `NotificationService` | Vyhodnocování pravidel příjemců a generování personalizovaných notifikací. |
+| `AuditService` | Zápis a čtení neměnné doménové auditní stopy. |
+| `SessionService` | Životní cyklus a validace aktivních klientských relací. |
+
+---
+
+### 32.23 Závislostní pravidla architektury (Dependency Rules)
+
+Pro zachování čistoty a stability systému platí striktní pravidlo směru závislostí:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 Presentation / UI Layer                     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ závisí na
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 API / Transport Layer                       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ závisí na
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Application Layer                           │
+└──────────────┬───────────────────────────────┬──────────────┘
+               │ závisí na                     │ používá rozhraní
+               ▼                               ▼
+┌─────────────────────────────┐ ┌─────────────────────────────┐
+│        Domain Layer         │ │     Repository Interfaces   │
+└─────────────────────────────┘ └──────────────▲──────────────┘
+                                               │ implementuje
+                                               │
+                                ┌──────────────┴──────────────┐
+                                │    Infrastructure Layer     │
+                                │    (Persistence / DB Impl)  │
+                                └─────────────────────────────┘
+```
+
+1. **Doména je nezávislá:** Doménová vrstva neimportuje ani nezná žádnou vnější vrstvu.
+2. **Infrastruktura na okraji:** Infrastruktura implementuje rozhraní definovaná v aplikační/doménové vrstvě (inverze závislostí).
+3. **Zákaz obcházení:** API vrstva nesmí obcházet aplikační logiku přímým voláním repozitářů.
+4. **Izolace UI:** UI vrstva nesmí obsahovat žádné persistenční ani databázové importy.
+
+---
+
+### 32.24 Infrastrukturní vrstva (Infrastructure Layer)
+
+Infrastrukturní vrstva poskytuje konkrétní technické implementace abstraktních rozhraní:
+* Databázové adaptéry a konkrétní implementace repozitářů.
+* Správa fyzických databázových připojení a transakčních poolů.
+* Implementace úložiště relací (`SessionStore`).
+* Implementace asynchronního procesoru Outboxu.
+* Technické adaptéry pro odesílání e-mailů či push zpráv.
+* Nástroje pro technické logování a sběr telemetrie.
+
+---
+
+### 32.25 Konfigurační vrstva a správa tajemství (Configuration & Secrets)
+
+Bezpečná správa parametrů běhového prostředí:
+* **Oddělení konfigurace:** Konfigurační parametry (databázové URL, porty, timeouty, limity mezipaměti) jsou odděleny od aplikačního kódu.
+* **Ochrana tajemství (Secrets):** Hesla, šifrovací klíče a přístupové tokeny **nesmí být nikdy součástí zdrojového kódu**. Načítají se za běhu z bezpečného prostředí.
+* **Zákaz úniku do logů:** Konfigurační tajemství nesmí být nikdy vypsána do technických logů ani zobrazení chyb.
+
+---
+
+### 32.26 Zpracování chyb napříč vrstvami (Error Handling Model)
+
+Chyby jsou předávány a transformovány deterministicky bez ztráty významu:
+
+```text
+Domain Layer:
+Vyvolání specifické doménové výjimky (např. InvariantViolationException, TaskStatusException)
+      ↓
+Application Layer:
+Zachycení výjimky, rollback transakce, zabalení do aplikační chyby (např. ConcurrencyConflictException)
+      ↓
+API / Transport Layer:
+Globální Error Handler mapuje chybu na standardizovaný HTTP status a bezpečné JSON tělo:
+├── Domain Validation Error        ──► HTTP 422 Unprocessable Entity
+├── Concurrency / Version Mismatch  ──► HTTP 409 Conflict
+├── Authorization Violation        ──► HTTP 403 Forbidden
+├── Entity Not Found               ──► HTTP 404 Not Found
+├── Authentication Failure         ──► HTTP 401 Unauthorized
+└── Neošetřená technická chyba     ──► HTTP 500 Internal Server Error (bez úniku stack trace)
+```
+
+---
+
+### 32.27 Aplikační logování vs. Auditní stopa (Technical Logging vs. AuditLog)
+
+Architektura striktně vymezuje dva odlišné typy protokolování:
+
+| Vlastnost | Technické aplikační logování | Doménový AuditLog |
+|---|---|---|
+| **Primární účel** | Diagnostika chyb, ladění, sledování výkonu, debugging. | Právní a provozní prokazatelnost změn, odpovědnost uživatelů. |
+| **Cílová skupina** | Vývojáři, DevOps, administrátoři infrastruktury. | Uživatelé, vlastníci Nástěnek, auditoři. |
+| **Ukládaný obsah** | Výjimky, stack trace, latence dotazů, technické varování. | Významné změny stavu entit, identifikátor Actora, timestamp. |
+| **Ukládání secrets** | Striktně zakázáno (maskování citlivých údajů). | Striktně zakázáno (pouze doménová metadata). |
+| **Retence a mazání** | Krátkodobá až střednědobá (rotace logů). | Trvalá / dlouhodobá (neměnný append-only záznam). |
+
+---
+
+### 32.28 Pozorovatelnost a provozní telemetrie (Observability & Monitoring)
+
+Pro zajištění spolehlivého provozu systém definuje minimální rámec telemetrie:
+* **Strukturované logování:** Záznamy ve strojově čitelném formátu (JSON) s korelačním ID požadavku (`correlation_id`).
+* **Sledované klíčové metriky:**
+  * Četnost chyb `5xx` a `4xx` (zejména nárůst `409 Conflict`),
+  * Doba odezvy API endpointů (latence $p_{95}, p_{99}$),
+  * Zpoždění zpracování Outboxu (Outbox backlog / lag),
+  * Počet neúspěšných pokusů o autentizaci (indikace brute-force útoků),
+  * Doba trvání databázových transakcí.
+* **Health Checks:** Provozní sondy pro zjištění stavu databáze a dostupnosti aplikace.
+
+---
+
+### 32.29 Bezpečnostní hranice mezi vrstvami (Security Boundaries Matrix)
+
+Jednoznačné vymezení pravomocí jednotlivých komponent:
+
+| Vrstva / Komponenta | Co SMÍ rozhodovat | Co NESMÍ rozhodovat |
+|---|---|---|
+| **UI / Frontend** | Prezentace, formátování, lokální stav rozhraní. | Autentizace, autorizace, oprávněnost operací. |
+| **API / Transport** | Validace transportního formátu a JSON syntaxe. | Doménová byznys pravidla, vlastnictví dat. |
+| **Authentication** | Skutečná identita Actora a platnost session. | Oprávnění k operacím na konkrétní Nástěnce. |
+| **Authorization** | Oprávněnost Actora k provedení dané operace. | Grafická prezentace a chování uživatelského rozhraní. |
+| **Application** | Orchestrace use case, transakční hranice. | Přímé zobrazení pro uživatele, formát HTTP odpovědi. |
+| **Domain** | Byznys pravidla, stavové přechody, invarianty. | Způsob uložení v DB, HTTP protokoly, formát DTO. |
+| **Repository** | Technické uložení a načtení dat z databáze. | Zda má uživatel právo danou entitu načíst či upravit. |
+| **Database** | Fyzická integrita dat, unikátní constrainty. | Uživatelský záměr, aplikační logika. |
+| **Infrastructure** | Technická integrace, síťová komunikace. | Doménová pravidla a rozhodování o vlastnictví. |
+
+---
+
+### 32.30 Technické hranice modulů (Modular Boundaries)
+
+Aplikace je logicky členěna do vysoce soudržných a volně vázaných modulů:
+* `auth` – autentizace, životní cyklus relací, zabezpečení přihlášení.
+* `boards` – správa Nástěnek, metadata, životní cyklus.
+* `membership` – členství v Nástěnkách, správa rolí, převod vlastnictví.
+* `tasks` – správa úkolů, přiřazení řešitelů, stavový model, historie změn.
+* `areas` – organizační členění Nástěnek na oblasti.
+* `notifications` – vyhodnocování příjemců, generování personalizovaných notifikací.
+* `audit` – správa neměnného auditního záznamu.
+* `search` – optimalizované vyhledávání, filtry a řazení dle Step 12.
+* `users` – správa uživatelských profilů a životního cyklu účtů.
+
+Každý modul vystavuje **jasně definované veřejné rozhraní (API)** a skrývá své vnitřní implementační struktury. Je zakázáno vytvářet nepřehledné „god services“ sdružující nesouvisející logiku.
+
+---
+
+### 32.31 Mezimodulová komunikace (Cross-Module Communication)
+
+Pravidla pro výměnu dat mezi moduly:
+1. **Synchronní komunikace:** Povolena výhradně přes veřejná rozhraní aplikačních služeb (např. `TaskService` volá `MembershipService` pro ověření členství přiřazovaného uživatele). Přímé sahání do cizích repozitářů nebo vnitřních tabulek je zakázáno.
+2. **Asynchronní komunikace:** Preferovaný způsob pro návazné vedlejší účinky prostřednictvím publikace doménových událostí (`Domain Events`). Například při změně řešitele publikuje modul `tasks` událost `TASK_ASSIGNED`, na kterou nezávisle reaguje modul `notifications`.
+
+---
+
+### 32.32 Vstřikování závislostí (Dependency Injection Principle)
+
+Architektura uplatňuje princip Dependency Injection (DI) jako návrhový vzor pro zajištění volné vazby:
+* Komponenty deklarují své závislosti ve formě abstraktních rozhraní.
+* Zajišťuje snadnou nahraditelnost technologických implementací (např. reálný e-mailový odesílač vs. testovací simulátor).
+* Konkrétní DI framework zůstává otevřeným implementačním rozhodnutím.
+
+---
+
+### 32.33 Abstrakce systémového času (Server-Side Clock)
+
+Doménová a aplikační logika nesmí přímo volat nedeterministické systémové funkce (např. `Date.now()`):
+* **Rozhraní Clock:** Veškerá práce s časem (časová razítka vytvoření, expirace relace, vyhodnocování termínů úkolů) probíhá přes abstrakci hodin (`ClockService`).
+* **Důvody:**
+  * Garantované používání standardu UTC na serveru.
+  * Dokonalá deterministická testovatelnost (možnost simulace plynutí času v testech).
+  * Konzistentní časová razítka v rámci jedné transakce.
+
+---
+
+### 32.34 Kontext volajícího (ActorContext Injection)
+
+Identita a oprávnění volajícího jsou předávány striktně přes kontext:
+* Objekt `ActorContext` je bezpečně vytvořen autentizační vrstvou z platné relace.
+* Je explicitně předáván jako argument metod aplikačních služeb.
+* Je zakázáno ukládat identitu uživatele do globálních mutovatelných proměnných nebo statických kontextů, které by mohly způsobit souběhové chyby při paralelním zpracování více požadavků.
+
+---
+
+### 32.35 Transakční vedlejší účinky (Transactional Side Effects)
+
+Externí a asynchronní vedlejší účinky nesmí ohrozit integritu primární transakce:
+* **Zásada nezávislosti:** Odeslání e-mailu, push notifikace, volání webhooku nebo zápis do externí analytiky nesmí být prováděny uvnitř hlavní databázové transakce.
+* **Riziko výpadku:** Pokud by selhalo odeslání e-mailu na externí SMTP server, nesmí dojít k rollbacku již schváleného a uloženého úkolu.
+* **Řešení:** Externí komunikace probíhá výhradně asynchronně na základě zpráv z Outboxu po úspěšném commitu transakce.
+
+---
+
+### 32.36 Externí integrace a vzor Adapter (External Integrations & Gateway)
+
+Veškerá komunikace se systémy třetích stran podléhá vzoru Adapter / Gateway:
+* Doménová vrstva definuje své čisté rozhraní (např. `IEmailSender`, `IPushNotifier`).
+* Infrastrukturní vrstva implementuje konkrétní adaptér integrující SDK externího poskytovatele.
+* Změna externího dodavatele (např. přechod k jiné e-mailové bráně) se dotkne výhradně jednoho infrastrukturního adaptéru a nijak neovlivní doménovou logiku.
+
+---
+
+### 32.37 Testovací architektura (Testing Architecture)
+
+Systém je navržen pro víceúrovňové automatizované testování:
+
+| Typ testu | Testovaná oblast | Rychlost | Závislosti |
+|---|---|---|---|
+| **Unit Tests (Jednotkové)** | Doménové entity, invarianty, byznys pravidla, výpočty. | Extrémní ($< 1\text{ ms}$) | Žádné (čistá paměť, bez DB a sítě). |
+| **Application Tests** | Use cases, orchestrace, vyhodnocení autorizace, souběh. | Velmi vysoká | Mock / Fake repozitáře a Clock. |
+| **Integration Tests** | Implementace repozitářů, DB constrainty, Outbox, SQL dotazy. | Střední | Skutečná testovací databáze. |
+| **API Tests** | HTTP endpointy, serializace, DTO validace, stavové kódy. | Střední | Běžící testovací server + DB. |
+| **E2E Tests** | Kompletní uživatelské toky (login ──► úkol ──► hotovo). | Pomalejší | Kompletní systém. |
+
+---
+
+### 32.38 Principy testovatelnosti (Testability Principles)
+
+Architektura garantuje snadné testování bez nutnosti složitého mockování:
+* Možnost podstrčení simulovaných hodin (`FakeClock`) pro testování termínů.
+* Možnost použití paměťových repozitářů (`InMemoryRepository`) pro bleskové aplikační testy.
+* Čisté oddělení vedlejších účinků (Outbox) umožňuje ověřit publikaci událostí pouhou kontrolou záznamů v paměti.
+
+---
+
+### 32.39 Výkonové hranice a prevence overengineeringu (Performance Boundaries)
+
+Architektura vyvažuje čistotu návrhu s vysokým výkonem:
+* **Žádný přímý přístup z UI:** UI nikdy nekomunikuje přímo s databází.
+* **Optimalizovaná čtecí cesta:** Čtení velkých objemů dat nepodléhá režii doménových agregátů (využití optimalizovaných projekcí dle Step 12).
+* **Přiměřenost abstrakcí:** Není nutné zavádět desítky vrstev pro triviální operace; kód musí zůstat čitelný, přímočarý a udržitelný.
+
+---
+
+### 32.40 Protikorupční vrstva (Anti-Corruption Boundary)
+
+Pokud systém v budoucnu integruje externí data či starší systémy:
+* Cizí datové modely nesmí proniknout do doménového modelu Nástěnky.
+* Převod zajišťuje dedikovaný překladač / mapper (Anti-Corruption Layer), který cizí data převede na čisté doménové entity Nástěnky.
+
+---
+
+### 32.41 Architektonická pravidla integrity kódu (Architecture Fitness Rules)
+
+Třináct závazných a automaticky ověřitelných pravidel (např. pomocí linterů či architektonických testů):
+1. UI / Frontend vrstva nesmí importovat žádný modul z databázové ani infrastrukturní vrstvy.
+2. UI nesmí představovat jedinou bariéru autorizace pro jakoukoliv operaci.
+3. Doménová vrstva nesmí importovat žádný HTTP framework ani webové knihovny.
+4. Doménová vrstva nesmí obsahovat anotace ani importy specifické pro konkrétní ORM.
+5. API kontrolery nesmí obsahovat přímé volání SQL dotazů.
+6. Repozitář nesmí provádět byznys autorizaci uživatele.
+7. Notifikační služba nesmí modifikovat stav doménových entit úkolu či Nástěnky.
+8. Auditní služba nesmí být závislá na životním cyklu auditovaného objektu (zákaz kaskádového mazání auditu).
+9. Externí integrace musí být zapouzdřeny za rozhraním adaptéru.
+10. Mezimodulová komunikace probíhá výhradně přes definovaná rozhraní nebo doménové události.
+11. Doménová událost smí být publikována pouze pro úspěšně potvrzenou (committed) změnu.
+12. Transakční hranice nesmí být definována v uživatelském rozhraní ani v API kontrolerech.
+13. Mechanismus optimistického řízení souběhu (OCC) nesmí být možné obejít alternativní metodou zápisu.
+
+---
+
+### 32.42 Deklarace technologické neutrality
+
+Tato kapitola definuje logickou a strukturní architekturu systému Nástěnka:
+* Definuje vrstvy, jejich hranice, odpovědnosti, transakční pravidla a toky dat.
+* **Nezavazuje projekt ke konkrétnímu programovacímu jazyku, backendovému frameworku, databázovému enginu, ORM knihovně ani cloudové platformě.**
+* Volba konkrétních programových balíčků a technologií bude provedena v navazující technické fázi na základě těchto architektonických mantinelů.
+
+---
+
+### 32.43 Celkový diagram závislostí a toků (Dependency & Flow Diagram)
+
+Následující diagram znázorňuje kompletní technologickou architekturu aplikace:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│               Browser / Mobile Client                  │
+└───────────────────────────┬────────────────────────────┘
+                            │ HTTPS / JSON
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│               Presentation / Frontend                  │
+│       UI Components / State / Local Validation         │
+└───────────────────────────┬────────────────────────────┘
+                            │ API Request
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                 API / Transport Layer                  │
+│          Routing / DTO Validation / Mapping            │
+└───────────────────────────┬────────────────────────────┘
+                            │
+               ┌────────────┴────────────┐
+               ▼                         ▼
+      Authentication Layer      Authorization Layer
+      (Session / ActorContext)  (Policy / Role Checks)
+               │                         │
+               └────────────┬────────────┘
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                  Application Layer                     │
+│         Use Cases / Orchestration / Unit of Work       │
+└──────────────┬──────────────────────────┬──────────────┘
+               │                          │
+               ▼                          ▼
+┌──────────────────────────────┐ ┌───────────────────────┐
+│         Domain Layer         │ │  Repository Interfaces│
+│ Entities / Invariants / Rules│ │  (Abstrakce úložiště) │
+└──────────────┬───────────────┘ └───────────▲───────────┘
+               │                             │ implementuje
+               │ vytvoří událost             │
+               ▼                             │
+┌──────────────────────────────┐ ┌───────────┴───────────┐
+│     Transactional Outbox     │ │ Infrastructure Layer  │
+│ (Uloženo v rámci DB transakce)│ │ (SQL / DB Driver)     │
+└──────────────┬───────────────┘ └───────────┬───────────┘
+               │                             │
+               ▼                             ▼
+┌──────────────────────────────┐ ┌───────────────────────┐
+│   Outbox Event Publisher     │ │       Database        │
+└──────────────┬───────────────┘ │ (ACID Storage / OCC)  │
+               │                 └───────────────────────┘
+        ┌──────┴──────┐
+        ▼             ▼
+  Notification    Další asynchronní
+    Service           reakce
+        │
+        ▼
+   AuditLog ◄─── (Zapisován transakčně z Application Layer)
+```
+
+---
+
+### 32.44 Souhrnná matice odpovědností vrstev (Layer Responsibilities Summary)
+
+| Technická vrstva | Primární architektonická odpovědnost |
+|---|---|
+| **Frontend / Presentation** | Uživatelský prožitek (UX), zobrazení komponent, lokální stav, navigace. |
+| **API / Transport** | Příjem požadavků, transportní validace, mapování DTO, HTTP stavové kódy. |
+| **Authentication** | Ověření identity uživatele, správa session, sestavení `ActorContext`. |
+| **Authorization** | Rozhodování o přístupu k operacím na základě rolí a kontextu Nástěnky. |
+| **Application** | Orchestrace use case, transakční hranice, koordinace domény a repozitářů. |
+| **Domain** | Zapouzdření čistých byznys pravidel, invarianty, modelování entit a hodnot. |
+| **Domain Services** | Koordinace doménových operací zasahujících více entit současně. |
+| **Repository** | Abstrakce persistenčních operací (načtení, uložení, smazání). |
+| **Infrastructure** | Technické ovladače databáze, integrace externích služeb, síťová komunikace. |
+| **Database** | Fyzické uložení dat, ACID garance, referenční integrita a constrainty. |
+| **Events / Outbox** | Spolehlivá transakční distribuce doménových událostí bez ztráty dat. |
+| **Notification** | Vyhodnocování recipient policy a tvorba personalizovaných notifikací. |
+| **Audit** | Záznam neměnné doménové historie bezpečnostně citlivých operací. |
+
+---
+
+### 32.45 Technické invarianty Step 14
+
+Architektura technických vrstev a odpovědností garantuje dodržení následujících dvaceti závazných invariantů:
+
+1. **UI nikdy není bezpečnostní autorita:** Zabezpečení je výhradně vynucováno serverovou autorizační vrstvou.
+2. **API nesmí obcházet Application Layer:** Veškeré požadavky na změnu stavu procházejí příslušným Use Case handlerem.
+3. **Authentication a Authorization jsou oddělené:** Autentizace řeší identitu; autorizace řeší práva k operaci.
+4. **ActorContext vzniká výhradně na serveru:** Identita uživatele nemůže být podvržena z těla klientského požadavku.
+5. **Domain Layer nezávisí na HTTP, UI ani ORM:** Doménová logika je technologicky agnostická.
+6. **Authorization není umístěna pouze v UI ani pouze v Repository:** Rozhodování o přístupu probíhá v dedikované vrstvě.
+7. **Transakce řídí Application / Persistence boundary:** Uživatelské rozhraní ani kontrolery nemanipulují s transakcemi.
+8. **Doménová změna a Outbox záznam musí být konzistentní:** Zápis entity a události probíhá v téže databázové transakci.
+9. **Domain Event vzniká pouze pro committed změnu:** Neúspěšná transakce nikdy nepublikuje událost.
+10. **Notification nemění původní doménový stav:** Notifikační vrstva je pouze pasivním konzumentem událostí.
+11. **Audit je nezávislý na životním cyklu cílové entity:** Smazání úkolu či oblasti nesmí odstranit auditní záznam.
+12. **Repository neobsahuje byznys autorizaci:** Repozitář provádí persistenční příkazy bez zkoumání práv volajícího.
+13. **Query path respektuje authorization scope:** I optimalizované čtení je přísně omezeno na povolená data.
+14. **Concurrency control nelze obejít:** Žádný zápisový kanál nesmí umožnit obejití verifikační kontroly OCC.
+15. **Externí služby jsou za adapter boundary:** Doména nezná konkrétní poskytovatele e-mailů, push zpráv ani cloudových SDK.
+16. **API DTO není automaticky Domain Model:** Transportní reprezentace je oddělena od doménových entit.
+17. **Persistence Model není automaticky Domain Model:** Databázové tabulky nejsou totožné s doménovými agregáty.
+18. **Secrets nejsou součástí zdrojového kódu ani běžných logů:** Tajemství jsou přísně izolována a chráněna.
+19. **Všechny vrstvy mají jasně definované odpovědnosti:** Je zakázáno vytvářet nepřehledné monolitické komponenty bez hranic.
+20. **Závislosti směřují pouze povoleným směrem:** Závislosti směřují k doméně; doména nezná infrastrukturu.
+
+---
+
+### 32.46 Technická rozhodnutí odložená do navazující fáze (Architecture Decision Record)
+
+Následující technologická a implementační rozhodnutí **nejsou v tomto architektonickém kroku schválena ani závazně vybrána** a zůstávají otevřena pro navazující fázi technického návrhu:
+* **Frontend framework / stack:** *Není ještě schváleno.*
+* **Backend runtime a framework:** *Není ještě schváleno.*
+* **Databázový engine (RDBMS):** *Není ještě schváleno.*
+* **Konkrétní ORM / Query Builder:** *Není ještě schváleno.*
+* **Konkrétní autentizační knihovna / provider:** *Není ještě schváleno.*
+* **Fyzické úložiště session tokenů:** *Není ještě schváleno.*
+* **Implementace asynchronní fronty a Outbox procesoru:** *Není ještě schváleno.*
+* **Mezipaměť (Cache Engine):** *Není ještě schváleno.*
+* **Správa a úložiště souborových příloh:** *Není ještě schváleno.*
+* **E-mailový a push transportní provider:** *Není ještě schváleno.*
+* **Konkrétní nástroje pro APM a observability:** *Není ještě schváleno.*
+* **Kontejnerizace, hostingová platforma a cloud:** *Není ještě schváleno.*
+* **Konfigurace CI/CD pipeline a deploymentu:** *Není ještě schváleno.*
+
+> [!NOTE]
+> Step 14 definuje strukturní integritu, vrstvy a toky systému Nástěnka. Konkrétní technologické produkty budou vybrány až v návazné implementační fázi na základě těchto pevných architektonických pravidel.
+
+---
+
+## 33. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -5161,3 +5931,4 @@ Následující technologická a grafická rozhodnutí **nejsou v tomto architekt
 | **0.9.0** | 19. 9. 2026 | Step 11 – Souběžný přístup, optimistic concurrency control, stale data, race conditions, konflikty změn, idempotence, retry a transakční konzistence. | Antigravity / Product Owner |
 | **1.0.0** | 19. 9. 2026 | Step 12 – Vyhledávání, filtrování, řazení, stránkování, autorizovaný query scope, stabilní pořadí, výkonové hranice a bezpečné čtení dat. | Antigravity / Product Owner |
 | **1.1.0** | 19. 9. 2026 | Step 13 – UI/UX architektura, informační architektura, navigace, struktura obrazovek, desktop/mobile chování, role-aware UI, loading/error/empty states, conflict UX a ochrana osobních dat. | Antigravity / Product Owner |
+| **1.2.0** | 19. 9. 2026 | Step 14 – Technická architektura aplikace, vrstvy, závislosti, Application/Domain/Infrastructure hranice, Authentication/Authorization, Repository, transakce, Event/Outbox, Notification, Audit, testovatelnost a technické invarianty. | Antigravity / Product Owner |
