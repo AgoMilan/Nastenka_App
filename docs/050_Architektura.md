@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 0.5.0<br>
+**Verze:** 0.6.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -1366,7 +1366,569 @@ Každá API operace musí zanechat systém v konzistentním stavu splňujícím 
 
 ---
 
-## 11. Stavový model úkolu
+## 11. Step 8 – Databázové schéma, constrainty a transakční pravidla
+
+Tato kapitola převádí schválený logický doménový model (Krok 6) a doménové operace s autorizačními hranicemi (Step 7) do formální úrovně databázového schématu, integritních omezení (constraints) a transakčních pravidel.
+
+Návrh je koncipován v souladu s relačními principy, avšak zůstává **technologicky neutrální** – nepředepisuje konkrétní databázový produkt (PostgreSQL, SQLite, MySQL apod.) ani nespecifikuje fyzické SQL DDL skripty či migrační soubory. Definuje však závazná strukturální, typová a relační pravidla, která musí jakákoliv budoucí implementace databázové vrstvy striktně garantovat.
+
+### 11.1 Základní princip dělby odpovědnosti (DB vs. Backend)
+Architektura striktně rozlišuje dvě vrstvy ochrany integrity:
+* **Aplikační vrstva (Backend):** Je jedinou autoritou rozhodující o tom, *KDO* smí operaci spustit (autentizace a autorizace rolí) a *ZDA* má požadavek platný obchodní kontext v souladu s doménovými pravidly. Databázový constraint nesmí být nikdy považován za náhradu autorizace.
+* **Databázová vrstva:** Je garantem toho, *CO* je vůbec přípustné v úložišti uchovat. Pomocí integritních omezení (PK, FK, UNIQUE, CHECK, NOT NULL) a transakčních záruk (ACID) představuje poslední neprostupnou linii ochrany před vznikem nekonzistentních, neúplných či osiřelých dat.
+
+---
+
+### 11.2 Databázové entity a sloupce
+
+Systém definuje sedm základních databázových entit: `User`, `Board`, `Membership`, `Area`, `Task`, `TaskParticipant` a `AuditLog`.
+
+#### 11.2.1 Tabulka `User` (Uživatelský účet)
+Reprezentuje fyzickou osobu registrovanou v systému.
+
+```text
+User
+----
+id           : ID (Primary Key, NOT NULL, neměnný)
+name         : String (NOT NULL, zobrazované jméno uživatele)
+email        : String (NOT NULL, přihlašovací e-mail, celosystémově unikátní)
+global_role  : String / Enum (NOT NULL, povolené hodnoty: 'USER', 'ADMIN', výchozí: 'USER')
+is_active    : Boolean (NOT NULL, výchozí: true; určuje možnost přihlášení a řešení)
+created_at   : Timestamp (NOT NULL, čas registrace)
+updated_at   : Timestamp (NOT NULL, čas poslední změny údajů)
+deleted_at   : Timestamp, Nullable (čas logického smazání / deaktivace; NULL = aktivní)
+```
+
+*Pravidla a constrainty pro User:*
+* `UNIQUE(email)`: Zaručuje celosystémovou jednoznačnost e-mailové identity.
+* `CHECK(global_role IN ('USER', 'ADMIN'))`: V tabulce `User` jsou povoleny výhradně globální systémové role. Role `OWNER`, `MANAGER` a `MEMBER` **nesmí být nikdy uloženy v tabulce `User`** – jedná se výhradně o kontextové role v rámci konkrétní Nástěnky uložené v tabulce `Membership`.
+* `is_active` a `deleted_at`: Slouží k deaktivaci a soft-delete uživatelského účtu. Fyzický záznam zůstává trvale v databázi pro ochranu historické a referenční integrity (autorské vazby `created_by`, záznamy v `AuditLog`).
+* **Integritní ochrana OWNERa:** Uživatel, který je aktuálním OWNERem jakékoliv aktivní Nástěnky, **nesmí být deaktivován ani smazán**, dokud neproběhne řádný převod vlastnictví na jiného člena nebo direktivní zásah Admina.
+
+#### 11.2.2 Tabulka `Board` (Nástěnka)
+Reprezentuje samostatný pracovní prostor s vlastními oblastmi, úkoly a členy.
+
+```text
+Board
+-----
+id           : ID (Primary Key, NOT NULL, neměnný)
+name         : String (NOT NULL, neprázdný název Nástěnky)
+description  : String / Text, Nullable (volitelný popis Nástěnky)
+created_by   : ID (Foreign Key → User.id, NOT NULL, historický zakladatel)
+created_at   : Timestamp (NOT NULL, čas vytvoření Nástěnky)
+updated_at   : Timestamp (NOT NULL, čas poslední aktualizace metadat)
+deleted_at   : Timestamp, Nullable (čas logického smazání; NULL = aktivní, hodnota = soft-deleted)
+```
+
+*Pravidla a constrainty pro Board:*
+* `created_by` představuje **pouze historického zakladatele Nástěnky** a je neměnný.
+* **Aktuální OWNER Nástěnky se nikdy neurčuje z `Board.created_by`**, nýbrž výhradně z aktivního záznamu v tabulce `Membership`, kde `role = 'OWNER'`.
+* **Kritický invariant:** Každá aktivní Nástěnka (`deleted_at IS NULL`) musí mít v každém okamžiku **přesně jednoho platného OWNERa**.
+* `deleted_at`: Slouží k soft-delete Nástěnky. Soft-deleted Nástěnka je skryta z běžného provozu a nepřijímá nové operace.
+
+#### 11.2.3 Tabulka `Membership` (Členství v Nástěnce)
+Relační entita propojující uživatele s konkrétní Nástěnkou a definující jeho kontextová práva.
+
+```text
+Membership
+----------
+id           : ID (Primary Key, NOT NULL, neměnný)
+user_id      : ID (Foreign Key → User.id, NOT NULL)
+board_id     : ID (Foreign Key → Board.id, NOT NULL)
+role         : String / Enum (NOT NULL, povolené hodnoty: 'OWNER', 'MANAGER', 'MEMBER')
+created_at   : Timestamp (NOT NULL, čas vzniku členství)
+updated_at   : Timestamp (NOT NULL, čas poslední změny role)
+```
+
+*Pravidla a constrainty pro Membership:*
+* `UNIQUE(user_id, board_id)`: Každý uživatel může mít na téže Nástěnce nejvýše jedno členství.
+* `CHECK(role IN ('OWNER', 'MANAGER', 'MEMBER'))`: Omezuje přípustné role na Nástěnce.
+* Jeden uživatel může být členem více Nástěnek současně a na každé z nich mít zcela odlišnou roli.
+* **Kritické invarianty kardinality rolí:**
+  * Právě jeden `OWNER` na aktivní Nástěnku (kardinalita `1`).
+  * Maximálně jeden `MANAGER` na Nástěnku (kardinalita `0..1`).
+  * Libovolný počet členů v roli `MEMBER` (kardinalita `0..N`).
+* **Jednoduchý constraint vs. business invariant:**
+  * Unikátnost `UNIQUE(user_id, board_id)` je jednoduchý relační constraint vynutitelný přímo unikátním indexem.
+  * Omezení „právě 1 OWNER“ a „max. 1 MANAGER“ představují cross-row invarianty, které v databázi vyžadují parciální unikátní indexy (např. `UNIQUE(board_id) WHERE role = 'OWNER'` a `UNIQUE(board_id) WHERE role = 'MANAGER'`) v kombinaci s transakční kontrolou backendu, aby Nástěnka nikdy nezůstala bez Ownera.
+
+#### 11.2.4 Tabulka `Area` (Organizační oblast Nástěnky)
+Reprezentuje organizační, tematický či prostorový okruh úkolů na konkrétní Nástěnce.
+
+```text
+Area
+----
+id           : ID (Primary Key, NOT NULL, neměnný)
+board_id     : ID (Foreign Key → Board.id, NOT NULL)
+name         : String (NOT NULL, neprázdný název oblasti)
+description  : String / Text, Nullable (volitelný popis oblasti)
+created_at   : Timestamp (NOT NULL, čas vytvoření oblasti)
+updated_at   : Timestamp (NOT NULL, čas poslední změny)
+```
+
+*Pravidla a constrainty pro Area:*
+* Oblast patří **výhradně jedné Nástěnce** (`board_id`). Nesmí být sdílena mezi různými Nástěnkami.
+* `UNIQUE(board_id, name)`: Název oblasti je v rámci dané Nástěnky jednoznačný.
+* Oblasti jsou **uživatelsky definované** (např. *Prodejna*, *Sklad*, *Chata*, *Dům*, *Koláčkova*). Nejedná se o pevný systémový číselník či enum.
+* Oblast nemá atribut `deleted_at`. Odstranění oblasti probíhá jako **controlled hard-delete** (viz podkapitola 11.7.6).
+
+#### 11.2.5 Tabulka `Task` (Úkol)
+Základní pracovní jednotka patřící konkrétní Nástěnce.
+
+```text
+Task
+----
+id           : ID (Primary Key, NOT NULL, neměnný)
+board_id     : ID (Foreign Key → Board.id, NOT NULL)
+area_id      : ID (Foreign Key → Area.id, Nullable; volitelné zařazení do oblasti)
+title        : String (NOT NULL, neprázdný název úkolu)
+description  : Text / String, Nullable (podrobný popis úkolu)
+status       : String / Enum (NOT NULL, výchozí: 'NOVÉ')
+priority     : String / Enum (NOT NULL, výchozí: 'BĚŽNÁ')
+due_date     : Date / Timestamp, Nullable (termín splnění)
+created_by   : ID (Foreign Key → User.id, NOT NULL, historický autor úkolu)
+assignee_id  : ID (Foreign Key → User.id, Nullable; NULL = 'Nepřiřazeno')
+created_at   : Timestamp (NOT NULL, čas vytvoření úkolu)
+updated_at   : Timestamp (NOT NULL, čas poslední aktualizace úkolu)
+completed_at : Timestamp, Nullable (čas dokončení úkolu / přechodu do HOTOVO)
+```
+
+*Pravidla a constrainty pro Task:*
+* `CHECK(status IN ('NOVÉ', 'PŘEVZATÉ', 'ROZPRACOVANÉ', 'ČEKÁ SE', 'HOTOVO', 'ARCHIVOVÁNO'))`
+* `CHECK(priority IN ('BĚŽNÁ', 'SPĚCHÁ'))`
+* Úkol patří **právě jedné Nástěnce** (`board_id`).
+* Pokud má úkol vyplněnou oblast (`area_id IS NOT NULL`), musí tato oblast patřit ke stejné Nástěnce (`Area.board_id == Task.board_id`).
+* `created_by` je neměnná autorská vazba; autor zůstává zachován i po odchodu uživatele z Nástěnky či deaktivaci jeho účtu.
+* `assignee_id` představuje aktuálního Hlavního Řešitele:
+  * Hodnota `NULL` znamená stav `Nepřiřazeno`.
+  * Pokud je zadán, musí mít aktivní `Membership` na stejné Nástěnce (`Task.board_id`).
+* Striktní autonomie vrstev: `created_by ≠ assignee_id` (autor nerovná se řešitel). Role na Nástěnce (`Membership.role`) nezakládá automatické řešitelství úkolu.
+* Trvalé smazání úkolu probíhá jako **controlled hard-delete** (viz podkapitola 11.7.5).
+
+#### 11.2.6 Tabulka `TaskParticipant` (Spoluřešitelé úkolu)
+Vazební entita pro evidenci spoluřešitelů podílejících se na řešení úkolu.
+
+```text
+TaskParticipant
+---------------
+id           : ID (Primary Key, NOT NULL, neměnný)
+task_id      : ID (Foreign Key → Task.id, NOT NULL)
+user_id      : ID (Foreign Key → User.id, NOT NULL)
+role         : String / Enum (NOT NULL, povolená hodnota: 'SPOLUŘEŠITEL', výchozí: 'SPOLUŘEŠITEL')
+created_at   : Timestamp (NOT NULL, čas připojení k úkolu)
+```
+
+*Pravidla a constrainty pro TaskParticipant:*
+* `UNIQUE(task_id, user_id)`: Jeden uživatel nesmí být k témuž úkolu připojen jako spoluřešitel duplicitně.
+* `CHECK(role = 'SPOLUŘEŠITEL')`
+* **Podmínka členství:** Spoluřešitel (`user_id`) musí mít platné aktivní členství (`Membership`) na stejné Nástěnce, do které patří daný úkol.
+* **Podmínka existence řešitele:** Záznam v `TaskParticipant` smí existovat pouze u úkolu, který má platného Hlavního Řešitele (`Task.assignee_id IS NOT NULL`). U úkolu ve stavu `Nepřiřazeno` nesmí existovat žádný spoluřešitel.
+* Role spoluřešitele vůči úkolu je zcela nezávislá na jeho roli na Nástěnce (`Membership.role`).
+
+#### 11.2.7 Tabulka `AuditLog` (Nezávislý auditní protokol)
+Samostatná, vysoce chráněná entita pro neměnný chronologický záznam bezpečnostních, správních a destruktivních událostí.
+
+```text
+AuditLog
+--------
+id             : ID (Primary Key, NOT NULL, neměnný)
+actor_id       : ID (Foreign Key → User.id, NOT NULL, iniciátor operace)
+timestamp      : Timestamp (NOT NULL, přesný čas operace v UTC)
+board_id       : ID (Foreign Key → Board.id, Nullable pro systémové zásahy, jinak NOT NULL)
+operation      : String (NOT NULL, identifikátor typu operace)
+target_id      : String / ID (NOT NULL, identifikátor cílové entity či uživatele)
+previous_state : Text / JSON / String, Nullable (stav či metadata před operací)
+new_state      : Text / JSON / String, Nullable (stav či metadata po operaci)
+metadata       : Text / JSON / String, Nullable (kontext: potvrzení SMAZAT, počet smazaných položek)
+```
+
+*Kritická pravidla pro AuditLog:*
+* **Nezávislost na životním cyklu cílového objektu:** AuditLog je navržen jako samostatná, kaskádně nemažeelná entita:
+  * Smazání úkolu (`DELETE_TASK`) nesmí smazat odpovídající záznamy v `AuditLog`.
+  * Smazání oblasti (`DELETE_AREA`) nesmí smazat odpovídající záznamy v `AuditLog`.
+  * Logické smazání Nástěnky (`DELETE_BOARD`) nesmí smazat odpovídající záznamy v `AuditLog`.
+  * Deaktivace uživatelského účtu nesmí smazat ani změnit jeho historické záznamy v `AuditLog`.
+* **Append-only charakter:** Záznamy v `AuditLog` vznikají výhradně po úspěšném commitu transakce. Jakákoliv dodatečná modifikace (`UPDATE`) nebo smazání (`DELETE`) záznamů v `AuditLog` je na databázové i aplikační úrovni přísně zakázána.
+
+---
+
+### 11.3 Primární a cizí klíče (Katalog relačních vazeb)
+
+Následující přehled formalizuje všechny relační vazby systému, jejich kardinality a chování z hlediska referenční integrity:
+
+| Vazba (Foreign Key) | Cílová entita | Kardinalita | Nullable | Význam vazby | Chování při odstranění cíle |
+|---|---|:---:|:---:|---|---|
+| `Board.created_by` | `User.id` | N:1 | NE | Historický zakladatel Nástěnky | `RESTRICT` (uživatele nelze fyzicky smazat, pokud založil Nástěnku) |
+| `Membership.user_id` | `User.id` | N:1 | NE | Uživatel s členstvím na Nástěnce | `RESTRICT` při běžném provozu; `CASCADE` pouze při fyzickém purge |
+| `Membership.board_id` | `Board.id` | N:1 | NE | Nástěnka, ke které členství náleží | `CASCADE` při trvalém odstranění Boardu; při soft-delete zůstává |
+| `Area.board_id` | `Board.id` | N:1 | NE | Nástěnka, do které oblast patří | `CASCADE` při trvalém odstranění Boardu |
+| `Task.board_id` | `Board.id` | N:1 | NE | Nástěnka, do které úkol patří | `CASCADE` při trvalém odstranění Boardu |
+| `Task.area_id` | `Area.id` | N:1 | ANO | Organizační oblast úkolu | `CASCADE` v rámci controlled hard-delete oblasti (viz 11.7.6) |
+| `Task.created_by` | `User.id` | N:1 | NE | Původní autor úkolu | `RESTRICT` (historická autorská vazba musí přetrvat) |
+| `Task.assignee_id` | `User.id` | N:1 | ANO | Aktuální Hlavní Řešitel (`NULL` = Nepřiřazeno) | `SET NULL` při odchodu člena / deaktivaci řešitele |
+| `TaskParticipant.task_id` | `Task.id` | N:1 | NE | Úkol, ke kterému účast náleží | `CASCADE` při trvalém smazání úkolu (řízený hard-delete) |
+| `TaskParticipant.user_id` | `User.id` | N:1 | NE | Spoluřešitel úkolu | `CASCADE` při vystoupení/odebrání uživatele z Nástěnky |
+| `AuditLog.actor_id` | `User.id` | N:1 | NE | Iniciátor auditované operace | `RESTRICT` (audit nesmí ztratit vazbu na původce) |
+| `AuditLog.board_id` | `Board.id` | N:1 | ANO | Nástěnka auditované události | `RESTRICT` / zachování hodnoty i při soft-delete Boardu |
+
+---
+
+### 11.4 Ochrana proti cross-board vazbám (Teritoriální integrita Nástěnky)
+
+Jedním z nejdůležitějších bezpečnostních invariantů systému Nástěnka je **striktní izolace jednotlivých Nástěnek**. Datový model a aplikační vrstva musí absolutně vyloučit vznik nekonzistentních křížových vazeb mezi Nástěnkami (tzv. cross-board anomálie):
+
+> [!IMPORTANT]
+> **Pravidlo teritoriální integrity Nástěnky:**
+> 1. Úkol patřící Nástěnce A **nesmí mít oblast (`area_id`) z Nástěnky B**.
+> 2. Úkol patřící Nástěnce A **nesmí mít řešitele (`assignee_id`), který není aktivním členem Nástěnky A**.
+> 3. Úkol patřící Nástěnce A **nesmí mít spoluřešitele (`TaskParticipant.user_id`), který není aktivním členem Nástěnky A**.
+
+#### Rozlišení jednoduché a kontextové integrity:
+1. **Jednoduchá referenční integrita (DB úroveň):**
+   * Běžný cizí klíč ověřuje pouze fyzickou existenci cílového řádku: `Task.board_id → Board.id`, `Task.area_id → Area.id`, `Task.assignee_id → User.id`.
+   * Samotný jednoduchý FK však nepozná, zda `Area` a `Task` patří ke stejnému `Boardu`, ani zda má `User` na daném `Boardu` záznam v tabulce `Membership`.
+2. **Kontextová integrita (složené DB vazby a transakční logika):**
+   * *Ochrana Task ↔ Area:* Lze v DB podpořit složeným cizím klíčem `FOREIGN KEY (board_id, area_id) REFERENCES Area(board_id, id)` za předpokladu unikátního indexu `UNIQUE(board_id, id)` v tabulce `Area`, případně striktní kontrolou v aplikační transakci před uložením.
+   * *Ochrana Task ↔ Assignee a Task ↔ Participant:* Vyžaduje kontextové ověření existence aktivního členství:
+     ```text
+     EXISTS (SELECT 1 FROM Membership WHERE user_id = :user_id AND board_id = :board_id)
+     ```
+   * Backend je autorita a garantuje tuto kontrolu atomicky v rámci transakce každé změny řešitele či účastníka.
+
+---
+
+### 11.5 Unikátní omezení a doménové constrainty (CHECK & UNIQUE)
+
+Pro zajištění datové integrity na úrovni databázového úložiště jsou definována následující omezení:
+
+1. **Unikátní constrainty (UNIQUE):**
+   * `UNIQUE(User.email)`: Vylučuje vznik dvou uživatelských účtů se stejným e-mailem.
+   * `UNIQUE(Membership.user_id, Membership.board_id)`: Vylučuje vícenásobné členství jednoho uživatele v téže Nástěnce.
+   * `UNIQUE(Area.board_id, name)`: Vylučuje existenci dvou oblastí se shodným názvem v rámci jedné Nástěnky.
+   * `UNIQUE(TaskParticipant.task_id, user_id)`: Vylučuje duplicitní přiřazení téhož spoluřešitele k úkolu.
+2. **Strukturální parciální unikátní constrainty (Role v Membership):**
+   * `UNIQUE(board_id) WHERE role = 'OWNER'`: Zajišťuje, že pro každou Nástěnku může v tabulce `Membership` existovat **nejvýše jeden řádek s rolí OWNER**.
+   * `UNIQUE(board_id) WHERE role = 'MANAGER'`: Zajišťuje, že pro každou Nástěnku může v tabulce `Membership` existovat **nejvýše jeden řádek s rolí MANAGER**.
+3. **Doménové CHECK constrainty (Výčtové hodnoty):**
+   * `CHECK (User.global_role IN ('USER', 'ADMIN'))`
+   * `CHECK (Membership.role IN ('OWNER', 'MANAGER', 'MEMBER'))`
+   * `CHECK (Task.status IN ('NOVÉ', 'PŘEVZATÉ', 'ROZPRACOVANÉ', 'ČEKÁ SE', 'HOTOVO', 'ARCHIVOVÁNO'))`
+   * `CHECK (Task.priority IN ('BĚŽNÁ', 'SPĚCHÁ'))`
+   * `CHECK (TaskParticipant.role = 'SPOLUŘEŠITEL')`
+4. **NOT NULL omezení:**
+   * Povinná pole jsou striktně označena `NOT NULL`: `User.email`, `User.name`, `User.global_role`, `Board.name`, `Board.created_by`, `Membership.role`, `Area.name`, `Task.title`, `Task.status`, `Task.priority`, `Task.created_by`, `AuditLog.operation`, `AuditLog.actor_id`.
+
+---
+
+### 11.6 Strukturální invarianty rolí OWNER a MANAGER
+
+Systém definuje striktní kardinalitu rolí pro každou aktivní Nástěnku:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│               KARDINALITA ROLÍ NA NÁSTĚNCE              │
+├────────────────────────────────────────────────────────┤
+│  OWNER   : právě 1 (přesně 1 platný vlastník)          │
+│  MANAGER : 0..1    (maximálně 1 provozní správce)      │
+│  MEMBER  : 0..N    (libovolný počet běžných členů)     │
+└────────────────────────────────────────────────────────┘
+```
+
+#### Jak databázová vrstva a transakce brání porušení invariantů:
+1. **Prevence dvou Ownerů (žádné zdvojení vlastnictví):**
+   * Parciální unikátní index v DB `UNIQUE(board_id) WHERE role = 'OWNER'` okamžitě zablokuje jakýkoliv pokus o vložení nebo povýšení druhého člena na roli `OWNER`.
+2. **Prevence nulového Ownera (žádná Nástěnka bez vlastníka):**
+   * Založení Nástěnky a přiřazení prvního Ownera probíhá v jediné atomické transakci (`CREATE_BOARD`).
+   * Běžné odebrání člena (`REMOVE_MEMBER`) odmítne smazat řádek, pokud `Membership.role == 'OWNER'` (HTTP 409 Conflict).
+   * Převod vlastnictví probíhá atomicky (povýšení nového + sesazení starého v jednom transakčním bloku).
+3. **Prevence dvou Managerů:**
+   * Parciální unikátní index `UNIQUE(board_id) WHERE role = 'MANAGER'` fyzicky vylučuje souběžnou existenci dvou řádků s rolí `MANAGER` na téže Nástěnce. Pokus o jmenování druhého Managera selže na úrovni DB i aplikační validace (HTTP 409 Conflict).
+
+---
+
+### 11.7 Transakční hranice klíčových operací
+
+Každá níže uvedená operace představuje **ucelenou atomickou jednotku práce (ACID transakci)**. Pokud kterýkoliv krok transakce selže nebo poruší integritní omezení, transakce je celá vrácena zpět (`ROLLBACK`) a v databázi nevznikne žádný nekonzistentní mezistav.
+
+#### 11.7.1 Vytvoření Nástěnky (`CREATE_BOARD`)
+Atomický transakční proces:
+1. Vložení záznamu `Board` (`name`, `created_by = actor_id`, `created_at`).
+2. Vložení záznamu `Membership` pro vlastníka (`board_id = Board.id`, `user_id = target_owner_id`, `role = 'OWNER'`).
+   * *Poznámka:* Pokud Nástěnku zakládá běžný uživatel, je `target_owner_id == actor_id`. Pokud Nástěnku zakládá globální Admin pro jiného uživatele, `created_by = Admin.id` a `Membership(user_id = target_owner_id, role = 'OWNER')`.
+3. Zápis do `AuditLog` (`operation = 'CREATE_BOARD'`).
+*Výsledek:* Nástěnka a její Owner vznikají současně; Nástěnka bez Ownera nikdy nevznikne.
+
+#### 11.7.2 Převod vlastnictví Nástěnky (`TRANSFER_OWNERSHIP`)
+Atomický transakční proces:
+1. Ověření platnosti volajícího (`actor` je současný `OWNER` nebo globální `ADMIN`).
+2. Ověření cílového uživatele (`target_user_id` je platný, aktivní uživatel).
+3. Případné založení `Membership` pro cílového uživatele, pokud ještě není členem.
+4. Aktualizace role původního Ownera:
+   * Pokud pozice Managera na Nástěnce není obsazena a je požadováno: `Membership.role = 'MANAGER'`.
+   * V opačném případě: `Membership.role = 'MEMBER'`.
+5. Aktualizace role cílového uživatele: `Membership.role = 'OWNER'`.
+6. Ověření invariantu: na Nástěnce existuje právě jeden `OWNER` a max. jeden `MANAGER`.
+7. Zápis do nezávislého `AuditLog` (`operation = 'TRANSFER_OWNERSHIP'`).
+*Výsledek:* Okamžitý atomický přechod bez rizika vzniku 0 nebo 2 vlastníků.
+
+#### 11.7.3 Správa členství a jmenování Managera (`MEMBERSHIP_OPERATIONS`)
+* **Přidání člena (`ADD_MEMBER`):**
+  1. Kontrola oprávnění (Owner, Manager nebo Admin).
+  2. Kontrola neexistence duplicity: `NOT EXISTS Membership(user_id, board_id)`.
+  3. Vložení `Membership` (výchozí role `MEMBER`).
+  4. Zápis do `AuditLog`.
+* **Odebrání člena (`REMOVE_MEMBER`):**
+  1. Kontrola oprávnění: Uživatel v roli `OWNER` nesmí být odebrán (`role != 'OWNER'`).
+  2. U všech úkolů dané Nástěnky, kde byl odcházející člen Hlavním Řešitelem (`Task.assignee_id == user_id`), systém nastaví `assignee_id = NULL` (přechod do `Nepřiřazeno`).
+  3. Smazání všech vazeb z tabulky `TaskParticipant`, kde `TaskParticipant.user_id == user_id` v rámci dané Nástěnky.
+  4. Smazání záznamu z tabulky `Membership`.
+  5. Zachování všech jím dříve vytvořených entit (`Task.created_by`) a komentářů.
+  6. Zápis do `AuditLog` (`operation = 'REMOVE_MEMBER'`).
+* **Změna role člena (`CHANGE_ROLE` / `CHANGE_MANAGER`):**
+  1. Kontrola oprávnění (Owner nebo Admin).
+  2. Pokud je cílová role `MANAGER`, ověření, že na Nástěnce dosud není žádný jiný aktivní Manager.
+  3. Aktualizace `Membership.role`.
+  4. Zápis do `AuditLog`.
+
+#### 11.7.4 Přiřazení řešitele a účastníků (`ASSIGN_TASK`, `ADD_PARTICIPANT`)
+* **Přiřazení řešitele (`PATCH /tasks/{id}/assignee`):**
+  1. Kontrola teritoriální integrity: ověření, že `target_assignee_id` (není-li `NULL`) má aktivní `Membership` na stejné Nástěnce jako úkol (`Task.board_id`).
+  2. Aktualizace `Task.assignee_id` (a případný posun stavu z `NOVÉ` na `PŘEVZATÉ`).
+  3. Zápis do historie změn úkolu.
+* **Připojení spoluřešitele (`POST /tasks/{id}/participants`):**
+  1. Ověření existence Hlavního Řešitele: `Task.assignee_id IS NOT NULL`.
+  2. Kontrola teritoriální integrity: `user_id` musí být aktivním členem dané Nástěnky.
+  3. Kontrola neexistence duplicity: `NOT EXISTS TaskParticipant(task_id, user_id)`.
+  4. Vložení záznamu `TaskParticipant`.
+  5. Zápis do historie změn úkolu.
+
+#### 11.7.5 Řízený hard-delete úkolu (`DELETE_TASK`)
+Atomický transakční proces trvalého odstranění úkolu:
+1. Ověření autorizace (volající je Řešitel, Spoluřešitel, Manager, Owner nebo Admin).
+2. Ověření bezpečnostního potvrzovacího řetězce `SMAZAT`.
+3. Ověření existence úkolu a načtení jeho původních metadat pro audit.
+4. Kaskádní odstranění všech přiřazených záznamů `TaskParticipant` daného úkolu.
+5. Fyzické odstranění samotného záznamu `Task` z databáze.
+6. Zápis auditního záznamu `DELETE_TASK` do **nezávislé tabulky `AuditLog`** (záznam obsahuje ID smazaného úkolu, název, původní stav a iniciátora).
+*Výsledek:* Úkol trvale zaniká, nevznikají žádné sirotčí vazby a auditní stopa zůstává trvale uložena.
+
+#### 11.7.6 Řízený hard-delete oblasti (`DELETE_AREA`)
+Atomický transakční proces trvalého odstranění organizační oblasti:
+1. Ověření autorizace (volající je Manager, Owner nebo Admin; Member nemá oprávnění).
+2. Ověření bezpečnostního potvrzovacího řetězce `SMAZAT`.
+3. Ověření existence oblasti na dané Nástěnce (`Area.board_id == boardId`).
+4. Vyhledání všech úkolů náležejících do této oblasti (`SELECT id FROM Task WHERE area_id = areaId`).
+5. Kaskádní odstranění všech záznamů `TaskParticipant` vázaných na tyto nalezené úkoly.
+6. Fyzické odstranění všech těchto úkolů z tabulky `Task`.
+7. Fyzické odstranění samotného záznamu `Area` z databáze.
+8. Zápis auditního záznamu `DELETE_AREA` do **nezávislé tabulky `AuditLog`** (včetně metadat o počtu smazaných úkolů).
+*Výsledek:* Oblast i všechny její úkoly zanikají v jediné nedílné transakci; nevznikají sirotčí úkoly bez oblasti a audit zůstává zachován.
+
+#### 11.7.7 Logické smazání Nástěnky (`DELETE_BOARD`)
+1. Ověření autorizace (výhradně Owner nebo Admin).
+2. Ověření potvrzení `SMAZAT`.
+3. Nastavení `Board.deleted_at = NOW()`.
+4. Veškerá podřízená data (Membership, Area, Task, AuditLog) zůstávají fyzicky zachována.
+5. Zápis auditního záznamu `DELETE_BOARD` do nezávislé tabulky `AuditLog`.
+
+---
+
+### 11.8 Životní cyklus dat: Soft-delete vs. Controlled Hard-delete
+
+Architektura striktně definuje, které entity podléhají logickému smazání (soft-delete) a které řízenému fyzickému zániku (controlled hard-delete):
+
+```text
+┌─────────────────────────┬─────────────────────────┬───────────────────────────────────────────┐
+│ ENTITA                  │ TYP SMAZÁNÍ             │ MECHANISMUS A DŮSLEDEK                    │
+├─────────────────────────┼─────────────────────────┼───────────────────────────────────────────┤
+│ User (Uživatelský účet) │ Soft-delete             │ is_active = false, deleted_at = Timestamp │
+│                         │ (Deaktivace)            │ Data zachována pro referenční integritu.  │
+├─────────────────────────┼─────────────────────────┼───────────────────────────────────────────┤
+│ Board (Nástěnka)        │ Soft-delete             │ deleted_at = Timestamp                    │
+│                         │ (Logické smazání)       │ Nástěnka skryta, obnova možná Adminem.    │
+├─────────────────────────┼─────────────────────────┼───────────────────────────────────────────┤
+│ Area (Oblast)           │ Controlled hard-delete  │ Fyzické smazání Area i obsažených Tasků   │
+│                         │ (Řízené trvalé smazání) │ s pojistkou SMAZAT; nezávislý audit.      │
+├─────────────────────────┼─────────────────────────┼───────────────────────────────────────────┤
+│ Task (Úkol)             │ Controlled hard-delete  │ Fyzické smazání Tasku a účastníků         │
+│                         │ (Řízené trvalé smazání) │ s pojistkou SMAZAT; nezávislý audit.      │
+├─────────────────────────┼─────────────────────────┼───────────────────────────────────────────┤
+│ AuditLog                │ NIKDY SE NEMAŽE         │ Trvalý append-only protokol, přežívá      │
+│                         │ (Trvalá auditní stopa)  │ smazání Tasku, Area i Boardu.             │
+└─────────────────────────┴─────────────────────────┴───────────────────────────────────────────┘
+```
+
+---
+
+### 11.9 Referenční akce při odstranění dat (`RESTRICT`, `CASCADE`, `SET NULL`)
+
+Koncepční chování databázových cizích klíčů při mazání:
+
+1. **`CASCADE` (Kaskádní smazání):**
+   * Používá se výhradně tam, kde podřízená entita tvoří neoddělitelnou součást nadřazeného celku a její existence bez nadřazeného objektu postrádá jakýkoliv smysl:
+     * `TaskParticipant` při smazání `Task` (spoluřešitelé zanikají s úkolem).
+     * `Task` a `TaskParticipant` při controlled hard-delete `Area` (úkoly zanikají s oblastí podle schváleného pravidla).
+     * `Area` a `Membership` při případném úplném fyzickém purge Nástěnky z databáze.
+2. **`RESTRICT` (Zákaz smazání):**
+   * Brání destrukci historických a autorských referencí:
+     * Zákaz fyzického smazání uživatele z tabulky `User`, pokud existují úkoly s jeho `created_by` nebo auditní záznamy s jeho `actor_id`.
+     * Zákaz smazání `Board`, pokud existují neuzavřené vazby, které neprošly řízeným procesem.
+3. **`SET NULL` (Uvolnění vazby):**
+   * Používá se tam, kde entita může pokračovat v existenci i po uvolnění vazby:
+     * `Task.assignee_id`: Při odchodu člena z Nástěnky přechází úkol do stavu `Nepřiřazeno` nastavením `assignee_id = NULL`. Úkol zůstává plně zachován na Nástěnce.
+4. **Oddělení DB kaskády od bezpečnostního oprávnění:**
+   * Databázové pravidlo `CASCADE` je pouze nástroj technické referenční integrity, nikoliv náhrada autorizace. Kaskádní odstranění smí být vyvoláno výhradně přes řádně autorizovaný doménový endpoint s potvrzením `SMAZAT`.
+
+---
+
+### 11.10 Souhrnná matice transakční atomicity
+
+Následující tabulka specifikuje, které doménové operace musí být v databázi zpracovány jako jediná atomická transakce a jaký je důvod tohoto požadavku:
+
+| Operace | Atomická | Důvod / Zajištění integrity |
+|---|:---:|---|
+| `CREATE_BOARD` | **ANO** | Garantuje současný vznik `Board` a `Membership(OWNER)`. Vylučuje Nástěnku bez vlastníka. |
+| `TRANSFER_OWNERSHIP` | **ANO** | Garantuje současné povýšení nového a sesazení původního Ownera. Vylučuje stav s 0 nebo 2 vlastníky. |
+| `CHANGE_MANAGER` | **ANO** | Ověřuje a obsazuje roli Manager tak, aby nevznikli 2 Manageři na jedné Nástěnce (`0..1`). |
+| `ADD_MEMBER` | **ANO** | Zajišťuje unikátnost členství a vytvoření záznamu s výchozí rolí v jednom kroku. |
+| `REMOVE_MEMBER` | **ANO** | Atomicky uvolní úkoly do `Nepřiřazeno`, odstraní spoluřešitelství a zruší členství bez sirotků. |
+| `CHANGE_ROLE` | **ANO** | Ověřuje integritní omezení rolí a provádí změnu oprávnění. |
+| `ASSIGN_TASK` | **ANO** | Ověřuje teritoriální příslušnost řešitele k Nástěnce a aktualizuje úkol. |
+| `ADD_TASK_PARTICIPANT` | **ANO** | Ověřuje existenci řešitele, členství na Nástěnce a zabraňuje duplicitní účasti. |
+| `DELETE_TASK` | **ANO** | Atomicky odstraní `Task`, jeho vazby `TaskParticipant` a vytvoří nezávislý audit `DELETE_TASK`. |
+| `DELETE_AREA` | **ANO** | Atomicky odstraní `Area`, všechny její obsažené `Tasky`, jejich účastníky a zapíše `DELETE_AREA`. |
+| `DELETE_BOARD` | **ANO** | Nastaví `deleted_at` a vytvoří auditní záznam `DELETE_BOARD`. |
+
+---
+
+### 11.11 Dělba odpovědnosti: DB constraint vs. Backend doménové pravidlo
+
+Databázová integrita a aplikační logika se vzájemně doplňují, ale plní odlišné úlohy:
+* **Backend doménová vrstva rozhoduje:** *KDO* (který uživatel v jaké roli) smí operaci provést a *ZDA* má požadavek platný obchodní kontext.
+* **Databázová vrstva garantuje:** *CO* je vůbec přípustné v úložišti uchovat, a představuje poslední neprostupnou linii ochrany konzistence dat.
+
+| Pravidlo / Integritní požadavek | DB constraint | Backend / Doména | Obojí | Vysvětlení dělby odpovědnosti |
+|---|:---:|:---:|:---:|---|
+| Primární klíče (PK entit) | **ANO** | - | - | Fyzická jednoznačnost záznamu v úložišti. |
+| Cizí klíče (FK vazby) | **ANO** | - | - | Základní referenční integrita (odkazovaná entita existuje). |
+| Unikátnost emailu (`User.email`) | **ANO** | ANO | **OBOJÍ** | DB vynucuje unikátní index; backend vrací přívětivou validační chybu 409/422. |
+| Unikátnost členství `(user_id, board_id)` | **ANO** | ANO | **OBOJÍ** | DB garantuje složený unikátní klíč; backend brání duplicitnímu přidání. |
+| Unikátnost účastníka `(task_id, user_id)` | **ANO** | ANO | **OBOJÍ** | DB garantuje složený unikátní klíč; backend kontroluje oprávnění k připojení. |
+| Unikátnost názvu oblasti na Nástěnce | **ANO** | ANO | **OBOJÍ** | DB garantuje `UNIQUE(board_id, name)`; backend validuje při vytváření. |
+| Platné výčtové hodnoty (Enumy) | **ANO** | ANO | **OBOJÍ** | DB hlídá `CHECK`; backend zajišťuje serializaci a typovou bezpečnost. |
+| Právě jeden OWNER na Nástěnce | Parciální index | Transakce | **OBOJÍ** | DB index brání 2 Ownerům; transakce backendu zaručuje, že nevznikne 0 Ownerů. |
+| Maximálně jeden MANAGER (`0..1`) | Parciální index | Transakce | **OBOJÍ** | DB index brání 2 Managerům; backend kontroluje obsazenost pozice. |
+| Assignee patří do stejného Boardu | - | Transakce | **Backend** | Kontextová vazba přes `Membership`; vyžaduje aplikační ověření v transakci. |
+| Účastník patří do stejného Boardu | - | Transakce | **Backend** | Kontextová vazba přes `Membership`; vyžaduje aplikační ověření v transakci. |
+| Oblast patří do stejného Boardu | Složený FK / - | Transakce | **OBOJÍ** | Ověřeno před zápisem, případně složeným FK `(board_id, area_id)`. |
+| Účastník pouze u úkolu s řešitelem | - | Transakce | **Backend** | Čistě doménové pravidlo životního cyklu; backend brání přidání k Nepřiřazeno. |
+| Atomický převod vlastnictví | - | Transakce | **Backend** | Komplexní multi-row transakce řízená aplikačním transakčním manažerem. |
+| Autorizace operací (Role a práva) | - | Autorizace | **Backend** | Databáze neřeší práva uživatele; autorizaci striktně řídí backend. |
+| Auditní záznam při operaci | - | Transakce | **Backend** | Backend v transakci garantuje povinný zápis do neměnné tabulky `AuditLog`. |
+
+---
+
+### 11.12 Závazné databázové invarianty (15 pilířů integrity)
+
+Systém po provedení jakékoliv operace musí splňovat následujících patnáct kritických invariantů:
+
+1. **Právě jeden Owner:** Každá aktivní Nástěnka má v každém okamžiku přesně jednoho platného uživatele s `Membership.role = 'OWNER'`.
+2. **Maximálně jeden Manager:** Žádná Nástěnka nemá v žádném okamžiku více než jednoho uživatele s `Membership.role = 'MANAGER'` (`0..1`).
+3. **Unikátnost členství:** Dvojice `(user_id, board_id)` je unikátní; jeden uživatel nemůže mít na stejné Nástěnce více záznamů v `Membership`.
+4. **Teritorialita oblasti:** Každá `Area` patří právě jedné Nástěnce a její název je v rámci dané Nástěnky unikátní.
+5. **Teritorialita úkolu:** Každý `Task` patří právě jedné Nástěnce (`board_id`).
+6. **Konzistence úkolu a oblasti:** Pokud má úkol přiřazenou oblast (`area_id IS NOT NULL`), musí tato oblast patřit ke stejné Nástěnce jako úkol (`Area.board_id == Task.board_id`).
+7. **Příslušnost řešitele k Nástěnce:** Pokud má úkol řešitele (`assignee_id IS NOT NULL`), musí tento uživatel mít aktivní platné `Membership` na stejné Nástěnce jako úkol.
+8. **Příslušnost spoluřešitele k Nástěnce:** Každý uživatel evidovaný v `TaskParticipant` musí mít aktivní platné `Membership` na stejné Nástěnce, do které daný úkol patří.
+9. **Unikátnost spoluřešitele:** Dvojice `(task_id, user_id)` v tabulce `TaskParticipant` je unikátní; vícenásobné přiřazení je vyloučeno.
+10. **Nedělitelnost založení Nástěnky:** Nástěnka a její výchozí Owner vznikají společně v jedné transakci; Nástěnka bez platného Ownera nesmí v databázi existovat.
+11. **Atomicita převodu vlastnictví:** Převod vlastnictví je nedílná operace zaručující okamžitý přechod vlastnictví bez mezistavu s 0 nebo 2 vlastníky.
+12. **Ochrana Ownera před odstraněním:** Uživatele v roli `OWNER` nelze z Nástěnky odebrat ani jeho účet deaktivovat bez předchozího převodu vlastnictví nebo zásahu Admina.
+13. **Nezávislost a trvalost auditu:** Záznamy v `AuditLog` jsou neměnné, trvalé a přežívají controlled hard-delete úkolu, oblasti i soft-delete Nástěnky.
+14. **Integrita řízeného mazání:** Controlled hard-delete úkolu nebo oblasti probíhá transakčně a nesmí zanechat v databázi žádné osiřelé záznamy (`TaskParticipant`, osiřelé úkoly).
+15. **Izolace smazané Nástěnky:** Soft-deleted Nástěnka (`deleted_at IS NOT NULL`) je nepřístupná pro běžné provozní operace a nepřijímá nové úkoly ani členy.
+
+---
+
+### 11.13 Kompletní relační ER diagram systému
+
+Následující diagram znázorňuje finální relační strukturu databázových entit, cizích klíčů a kardinalit:
+
+```text
+       ┌────────────────────────┐
+       │          USER          │
+       ├────────────────────────┤
+       │ id (PK)                │
+       │ name                   │
+       │ email (UNIQUE)         │
+       │ global_role            │
+       │ is_active              │
+       │ created_at, updated_at │
+       │ deleted_at (nullable)  │
+       └───┬───────┬───────┬────┘
+           │       │       │
+      1:N  │       │       │ 1:N (historický autor / zakladatel)
+  (člen)   │       │       ├──────────────────────┐
+           ▼       │       ▼                      ▼
+┌──────────────┐   │ ┌──────────────┐    ┌──────────────────┐
+│  MEMBERSHIP  │   │ │    BOARD     │    │     AUDIT_LOG    │
+├──────────────┤   │ ├──────────────┤    ├──────────────────┤
+│ id (PK)      │   │ │ id (PK)      │    │ id (PK)          │
+│ user_id (FK) ├───┼─┤ created_by   │◄───┤ actor_id (FK)    │
+│ board_id (FK)│   │ │ name         │    │ board_id (FK,opt)│
+│ role         │   │ │ description  │    │ operation        │
+│ created_at   │   │ │ created_at   │    │ target_id        │
+│ updated_at   │   │ │ updated_at   │    │ previous_state   │
+└──────────────┘   │ │ deleted_at   │    │ new_state        │
+ UNIQUE(user,board)│ └───┬──────┬───┘    │ metadata         │
+                   │     │      │        └──────────────────┘
+                   │ 1:N │      │ 1:N
+                   │     ▼      ▼
+                   │   ┌──────────────┐
+                   │   │     AREA     │
+                   │   ├──────────────┤
+                   │   │ id (PK)      │
+                   │   │ board_id (FK)│
+                   │   │ name         │
+                   │   │ description  │
+                   │   │ created_at   │
+                   │   │ updated_at   │
+                   │   └──────┬───────┘
+                   │          │ UNIQUE(board_id, name)
+                   │          │
+                   │          │ 1:N (volitelně)
+                   │          ▼
+                   │   ┌────────────────────────┐
+                   │   │          TASK          │
+                   │   ├────────────────────────┤
+                   │   │ id (PK)                │
+                   │   │ board_id (FK)          │
+                   │   │ area_id (FK, nullable) │
+                   │   │ title, description     │
+                   │   │ status, priority       │
+                   │   │ due_date, completed_at │
+                   │   │ created_by (FK → User) │
+                   ├───┼─┤ assignee_id (FK, opt)  │
+                   │   │ created_at, updated_at │
+                   │   └──────────┬─────────────┘
+                   │              │
+                   │              │ 1:N
+                   │              ▼
+                   │   ┌────────────────────────┐
+                   │   │    TASK_PARTICIPANT    │
+                   │   ├────────────────────────┤
+                   │   │ id (PK)                │
+                   │   │ task_id (FK)           │
+                   └───┼─┤ user_id (FK)           │
+                       │ role ('SPOLUŘEŠITEL')  │
+                       │ created_at             │
+                       └────────────────────────┘
+                        UNIQUE(task_id, user_id)
+```
+
+---
+
+## 12. Stavový model úkolu
 
 Životní cyklus úkolu definuje stavy:
 
@@ -1415,7 +1977,7 @@ Každá API operace musí zanechat systém v konzistentním stavu splňujícím 
 
 ---
 
-## 12. Archiv a trvalé mazání
+## 13. Archiv a trvalé mazání
 
 Architektura striktně odlišuje **Archivaci** od **Definitivního smazání**:
 
@@ -1439,7 +2001,7 @@ Architektura striktně odlišuje **Archivaci** od **Definitivního smazání**:
 
 ---
 
-## 13. Historie změn a auditní stopa
+## 14. Historie změn a auditní stopa
 
 Systém udržuje neměnný chronologický záznam klíčových událostí na dvou úrovních:
 
@@ -1471,7 +2033,7 @@ Detailně specifikováno v podkapitole **8.9 Auditní stopa bezpečnostních a s
 
 ---
 
-## 14. Osobní pracovní prostor
+## 15. Osobní pracovní prostor
 
 Logická součást úkolu vyhrazená konkrétnímu uživateli:
 
@@ -1488,7 +2050,7 @@ Logická součást úkolu vyhrazená konkrétnímu uživateli:
 
 ---
 
-## 15. Týmové přílohy
+## 16. Týmové přílohy
 
 Logická součást sdíleného obsahu úkolu:
 
@@ -1500,7 +2062,7 @@ Logická součást sdíleného obsahu úkolu:
 
 ---
 
-## 16. Notifikační architektura
+## 17. Notifikační architektura
 
 Pro 1. verzi aplikace je závazný jediný prioritní notifikační tok:
 
@@ -1523,7 +2085,7 @@ Všichni členové dané Nástěnky (bez výjimky)
 
 ---
 
-## 17. Izolace Nástěnek
+## 18. Izolace Nástěnek
 
 Aplikace podporuje multi-board architekturu s přísnou datovou i procesní separací:
 
@@ -1533,7 +2095,7 @@ Aplikace podporuje multi-board architekturu s přísnou datovou i procesní sepa
 
 ---
 
-## 18. Odchod člena, deaktivace účtu a správa životního cyklu
+## 19. Odchod člena, deaktivace účtu a správa životního cyklu
 
 Architektura v souladu s datovým modelem (viz podkapitola 9.13) striktně rozlišuje tyto události:
 
@@ -1558,7 +2120,7 @@ Architektura v souladu s datovým modelem (viz podkapitola 9.13) striktně rozli
 
 ---
 
-## 19. Omezení rozsahu (Co se zatím záměrně neřeší)
+## 20. Omezení rozsahu (Co se zatím záměrně neřeší)
 
 V souladu s analytickou fází jsou následující technologická a implementační rozhodnutí **záměrně odložena do dalších fází**:
 
@@ -1575,7 +2137,7 @@ V souladu s analytickou fází jsou následující technologická a implementač
 
 ---
 
-## 20. Otevřené otázky k architektuře
+## 21. Otevřené otázky k architektuře
 
 Otázka *„Může Hlavní Řešitel odebrat Spoluřešitele?“* byla k datu 19. 9. 2026 definitivně vyřešena a uzavřena schválením **Varianty 1**:
 * Hlavní Řešitel může odebrat Spoluřešitele ze seznamu Spoluřešitelů daného úkolu.
@@ -1585,7 +2147,7 @@ V současné verzi architektury nejsou evidovány žádné další otevřené ot
 
 ---
 
-## 21. Historie verzí
+## 22. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -1594,3 +2156,4 @@ V současné verzi architektury nejsou evidovány žádné další otevřené ot
 | **0.3.0** | 19. 9. 2026 | Zapracován Krok 5 – Oprávnění a bezpečnostní hranice: definován model rolí (ADMIN globálně; OWNER, právě max. 1 MANAGER, MEMBER na Nástěnce), atomický převod vlastnictví, bezpečnostní pravidla a audit citlivých operací. | Antigravity / Product Owner |
 | **0.4.0** | 19. 9. 2026 | Krok 6: Datový model a vztahy – definice User, Board, Membership, Task a TaskParticipant, globální role ADMIN, role OWNER / MANAGER / MEMBER v Membership, kardinality a databázové invarianty, vztahy Task → creator / assignee / participants, oddělení role na Boardu od odpovědnosti za Task, pravidla pro převod Ownera, pravidla pro deaktivaci Usera a soft-delete Boardu. | Antigravity / Product Owner |
 | **0.5.0** | 19. 9. 2026 | Step 7: Doménové operace, API a autorizační hranice – princip autority backendu, kontext actor vs. target, logické API operace nad Board, Membership, Task a Area (včetně řízeného hard-delete Tasku a smazání oblasti), autorizační matice, nezávislý audit destruktivních operací (DELETE_TASK, DELETE_AREA), atomické transakce a doménové invarianty. | Antigravity / Product Owner |
+| **0.6.0** | 19. 9. 2026 | Step 8 – Databázové schéma, primární a cizí klíče, constrainty, referenční integrita, transakční hranice a databázové invarianty. | Antigravity / Product Owner |
