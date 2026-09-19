@@ -2,7 +2,7 @@
 
 **Typ dokumentu:** Logická architektura a doménový model systému<br>
 **Stav:** Schválená architektura<br>
-**Verze:** 1.3.0<br>
+**Verze:** 1.4.0<br>
 **Vychází z:** `docs/020_Pozadavky.md` (v0.9.0), `docs/030_Funkcni_model.md` (v0.3.0) a `docs/040_Uzivatelske_scenare.md` (v0.3.0)<br>
 **Datum:** 19. 9. 2026
 
@@ -6522,7 +6522,1034 @@ Doménový model systému Nástěnka zůstává čistý, technologicky nezávisl
 
 ---
 
-## 35. Historie verzí
+## 35. Step 16 – Implementační struktura projektu a bootstrap architektura
+
+### 35.1 Účel Step 16 a přechod z návrhu k fyzické struktuře
+Step 16 představuje klíčový most mezi architektonickým návrhem (Step 5–14), schváleným technologickým stackem (Step 15, ADR-001 až ADR-027) a nadcházející implementací.
+
+> [!IMPORTANT]
+> **Tento krok je stále součástí návrhové fáze.** V rámci Step 16 se **nevytváří žádný kód**, neinicializují se balíčky, negenerují se migrace ani se fyzicky nezakládají adresáře na disku. Veškerá struktura je definována jako závazný normativní plán a architektonická specifikace pro následující krok (Step 17 – Bootstrap skutečného projektu).
+
+Cílem Step 16 je:
+1. Definovat přesné fyzické uspořádání repozitáře podle konceptu **modulárního monolitu**.
+2. Stanovit striktní hranice mezi prezentační vrstvou (Next.js App Router), doménovými moduly, aplikační logikou a infrastrukturními adaptéry.
+3. Nastavit pravidla závislostí a zakázaných importů, které zabrání erozi architektury během kódování.
+4. Připravit detailní sekvenci bootstrapu a životního cyklu požadavku pro budoucí implementaci.
+
+---
+
+### 35.2 Referenční adresářová struktura repozitáře (Directory Tree)
+Následující stromová struktura představuje referenční fyzické uspořádání zdrojového kódu a konfigurace projektu Nástěnka:
+
+```text
+Nastenka/
+│
+├── app/                                  # Next.js 16 App Router (Presentation & Routing)
+│   ├── (public)/                         # Veřejně přístupné trasy (bez nutnosti přihlášení)
+│   │   ├── login/
+│   │   │   └── page.tsx                  # Přihlašovací formulář
+│   │   ├── recovery/
+│   │   │   └── page.tsx                  # Obnova zapomenutého hesla
+│   │   └── layout.tsx                    # Veřejný layout (čistý, centrovaný kontejner)
+│   │
+│   ├── (authenticated)/                  # Chráněné trasy (vyžadují aktivní server-side session)
+│   │   ├── boards/                       # Nástěnky
+│   │   │   ├── page.tsx                  # Rozcestník nástěnek uživatele
+│   │   │   └── [boardId]/
+│   │   │       ├── page.tsx              # Detail nástěnky (oblasti, úkoly, filtry)
+│   │   │       ├── members/
+│   │   │       │   └── page.tsx          # Správa členů a pozvánek nástěnky
+│   │   │       └── settings/
+│   │   │           └── page.tsx          # Nastavení nástěnky (pouze OWNER / MANAGER)
+│   │   ├── tasks/
+│   │   │   └── [taskId]/
+│   │   │       └── page.tsx              # Přímý odkaz na detail úkolu (deeplink / modal fallback)
+│   │   ├── my-work/
+│   │   │   └── page.tsx                  # Osobní prostor: „Moje úkoly“ napříč nástěnkami
+│   │   ├── notifications/
+│   │   │   └── page.tsx                  # Centrum interních notifikací
+│   │   ├── profile/
+│   │   │   └── page.tsx                  # Uživatelský profil a správa aktivních sessions
+│   │   └── layout.tsx                    # Autentizovaný layout (navigace, Board switcher, zvonek)
+│   │
+│   ├── api/                              # REST-like HTTP JSON API Route Handlery
+│   │   ├── auth/
+│   │   │   └── [...betterAuth]/
+│   │   │       └── route.ts              # Better Auth webhooky a session endpointy
+│   │   ├── boards/
+│   │   │   ├── route.ts                  # GET /api/boards, POST /api/boards
+│   │   │   └── [boardId]/
+│   │   │       ├── route.ts              # GET, PATCH, DELETE /api/boards/[boardId]
+│   │   │       ├── members/
+│   │   │       │   ├── route.ts          # GET, POST /api/boards/[boardId]/members
+│   │   │       │   └── [memberId]/
+│   │   │       │       └── route.ts      # PATCH, DELETE (role change, remove member)
+│   │   │       └── transfer-ownership/
+│   │   │           └── route.ts          # POST /api/boards/[boardId]/transfer-ownership
+│   │   ├── tasks/
+│   │   │   ├── route.ts                  # GET /api/tasks, POST /api/tasks
+│   │   │   └── [taskId]/
+│   │   │       ├── route.ts              # GET, PATCH, DELETE /api/tasks/[taskId] (OCC If-Match)
+│   │   │       ├── assign/
+│   │   │       │   └── route.ts          # POST /api/tasks/[taskId]/assign
+│   │   │       ├── participants/
+│   │   │       │   ├── route.ts          # POST /api/tasks/[taskId]/participants (join/add)
+│   │   │       │   └── [userId]/
+│   │   │       │       └── route.ts      # DELETE /api/tasks/[taskId]/participants/[userId]
+│   │   │       └── personal-notes/
+│   │   │           └── route.ts          # GET, PUT /api/tasks/[taskId]/personal-notes
+│   │   ├── areas/
+│   │   │   ├── route.ts                  # POST /api/areas
+│   │   │   └── [areaId]/
+│   │   │       └── route.ts              # PATCH, DELETE /api/areas/[areaId]
+│   │   ├── notifications/
+│   │   │   ├── route.ts                  # GET /api/notifications (smart polling), PATCH read-all
+│   │   │   └── [notificationId]/
+│   │   │       └── route.ts              # PATCH mark-read
+│   │   ├── search/
+│   │   │   └── route.ts                  # GET /api/search (full-text search uvnitř scope)
+│   │   ├── health/
+│   │   │   └── route.ts                  # GET /api/health (liveness probe)
+│   │   └── ready/
+│   │       └── route.ts                  # GET /api/ready (readiness probe - DB ping)
+│   │
+│   ├── globals.css                       # Tailwind CSS v4 direktivy a základní design tokens
+│   ├── layout.tsx                        # Kořenový HTML layout (HTML, body, ThemeProvider, Font)
+│   ├── page.tsx                          # Kořenové přesměrování (na /boards nebo /login)
+│   ├── loading.tsx                       # Globální fallback skeleton
+│   ├── error.tsx                         # Globální boundary pro neošetřené chyby v UI
+│   └── not-found.tsx                     # 404 chybová obrazovka
+│
+├── modules/                              # Doménové a aplikační moduly (Byznys logika monolitu)
+│   ├── auth/                             # Modul identity, ActorContext a autentizačního mostu
+│   │   ├── domain/                       # Auth entity, Session invarianty
+│   │   ├── application/                  # Use cases: ResolveActorContext, RevokeSession
+│   │   ├── api/dto/                      # Auth DTO a Zod schémata
+│   │   └── index.ts                      # Veřejné rozhraní modulu auth
+│   │
+│   ├── users/                            # Modul uživatelů a globálních účtů
+│   │   ├── domain/                       # User entita, UserStatus, GlobalRole enum
+│   │   ├── application/                  # Use cases: DeactivateUser, GetUserProfile
+│   │   ├── application/ports/            # IUserRepository port
+│   │   ├── api/dto/                      # User DTO
+│   │   └── index.ts
+│   │
+│   ├── boards/                           # Modul Nástěnek (agregát Board)
+│   │   ├── domain/                       # Board entita, BoardStatus, Ownership invarianty
+│   │   ├── application/                  # CreateBoard, UpdateBoard, SoftDeleteBoard, TransferOwnership
+│   │   ├── application/ports/            # IBoardRepository port
+│   │   ├── application/policies/         # BoardPolicy (autorizační pravidla pro Board)
+│   │   ├── api/dto/                      # Board DTO a Zod validace
+│   │   └── index.ts
+│   │
+│   ├── membership/                       # Modul členství v Nástěnce
+│   │   ├── domain/                       # Membership entita, BoardRole (OWNER, MANAGER, MEMBER)
+│   │   ├── application/                  # AddMember, ChangeMemberRole, RemoveMember, LeaveBoard
+│   │   ├── application/ports/            # IMembershipRepository port
+│   │   ├── application/policies/         # MembershipPolicy
+│   │   ├── api/dto/                      # Membership DTO
+│   │   └── index.ts
+│   │
+│   ├── areas/                            # Modul Oblastí Nástěnky
+│   │   ├── domain/                       # Area entita, unicitní pravidla názvu v rámci Boardu
+│   │   ├── application/                  # CreateArea, RenameArea, DeleteArea (kontrola úkolů)
+│   │   ├── application/ports/            # IAreaRepository port
+│   │   ├── application/policies/         # AreaPolicy
+│   │   ├── api/dto/                      # Area DTO
+│   │   └── index.ts
+│   │
+│   ├── tasks/                            # Modul Úkolů (hlavní pracovní agregát)
+│   │   ├── domain/                       # Task entita, TaskParticipant, TaskPriority, TaskStatus,
+│   │   │                                 # PersonalNotes entita, OCC version pravidla, Task invarianty
+│   │   ├── domain/events/                # TaskCreatedEvent, TaskAssignedEvent, TaskCompletedEvent...
+│   │   ├── application/                  # CreateTask, UpdateTask, AssignTask, DeleteTask (hard-delete),
+│   │   │                                 # AddParticipant, RemoveParticipant, CompleteTask, ArchiveTask
+│   │   ├── application/ports/            # ITaskRepository port, IPersonalNotesRepository port
+│   │   ├── application/policies/         # TaskPolicy (matice oprávnění pro operace nad úkolem)
+│   │   ├── api/dto/                      # Task DTO a Zod validační schémata (včetně If-Match)
+│   │   └── index.ts
+│   │
+│   ├── notifications/                    # Modul notifikací
+│   │   ├── domain/                       # Notification entita, NotificationType, RecipientPolicy
+│   │   ├── application/                  # CreateNotification, MarkAsRead, MarkAllAsRead, GetUserNotifications
+│   │   ├── application/ports/            # INotificationRepository port
+│   │   ├── api/dto/                      # Notification DTO
+│   │   └── index.ts
+│   │
+│   ├── audit/                            # Modul auditu citlivých a destruktivních operací
+│   │   ├── domain/                       # AuditLog entita, AuditAction enum, immutability pravidla
+│   │   ├── application/                  # RecordAuditEvent use case, QueryAuditLog
+│   │   ├── application/ports/            # IAuditLogRepository port
+│   │   ├── api/dto/                      # AuditLog DTO
+│   │   └── index.ts
+│   │
+│   └── search/                           # Modul vyhledávání a filtrování dat
+│       ├── application/                  # SearchTasksQuery, FilterBoardsQuery (Authorized Scope)
+│       ├── application/ports/            # ISearchQueryService port
+│       ├── api/dto/                      # Search DTO a parametry
+│       └── index.ts
+│
+├── infrastructure/                       # Technická infrastruktura, adaptéry a integrace
+│   ├── database/                         # Drizzle ORM a PostgreSQL adaptéry
+│   │   ├── client.ts                     # Inicializace pg connection pool a Drizzle instance
+│   │   └── repositories/                 # Konkrétní implementace I*Repository rozhraní
+│   │       ├── DrizzleUserRepository.ts
+│   │       ├── DrizzleBoardRepository.ts
+│   │       ├── DrizzleMembershipRepository.ts
+│   │       ├── DrizzleAreaRepository.ts
+│   │       ├── DrizzleTaskRepository.ts
+│   │       ├── DrizzleNotificationRepository.ts
+│   │       └── DrizzleAuditLogRepository.ts
+│   │
+│   ├── auth/                             # Better Auth konfigurace a adaptéry
+│   │   ├── better-auth.config.ts         # Konfigurace Better Auth pro PostgreSQL tabulky
+│   │   └── BetterAuthAdapter.ts          # Most mezi Better Auth session a doménovým ActorContext
+│   │
+│   ├── events/                           # Transakční Outbox infrastruktura
+│   │   ├── outbox.schema.ts              # Schéma outbox tabulky
+│   │   ├── DrizzleOutboxRepository.ts    # Ukládání eventů v rámci DB transakce
+│   │   ├── OutboxProcessor.ts            # Asynchronní worker vyzvedávající nezpracované události
+│   │   └── EventDispatcher.ts            # Směrování doménových událostí na in-process handlery
+│   │
+│   ├── notifications/                    # Distribuce notifikací
+│   │   └── InAppNotificationDelivery.ts  # Zápis do notifikační tabulky
+│   │
+│   ├── logging/                          # Logování (Pino)
+│   │   ├── logger.ts                     # Konfigurace Pino loggeru (JSON formát, sanitizace PII)
+│   │   └── RequestLogger.ts              # Middleware / helper pro přidání correlationId
+│   │
+│   ├── clock/                            # Časová infrastruktura
+│   │   └── SystemClock.ts                # Produkční implementace Clock interface v UTC
+│   │
+│   ├── jobs/                             # Plánované úlohy na pozadí
+│   │   ├── JobScheduler.ts               # In-process intervalový spouštěč
+│   │   └── PgAdvisoryLockManager.ts      # Správa distribuovaných zámků přes pg_try_advisory_xact_lock
+│   │
+│   └── configuration/                    # Správa konfigurace a proměnných prostředí
+│       ├── env.schema.ts                 # Zod validační schéma pro process.env
+│       └── env.ts                        # Typově bezpečný export validovaných env proměnných
+│
+├── shared/                               # Sdílené doménově nezávislé abstrakce a typy
+│   ├── types/                            # Primitivní typy a Branded IDs
+│   │   ├── ids.ts                        # UserId, BoardId, TaskId, AreaId, MembershipId
+│   │   ├── result.ts                     # Result<T, E> monadické rozhraní pro use cases
+│   │   └── pagination.ts                 # Cursor / Keyset stránkovací struktury
+│   ├── errors/                           # Standardizovaná hierarchie chyb systému
+│   │   ├── AppError.ts                   # Základní abstraktní třída chyb
+│   │   ├── ValidationError.ts            # Chyba vstupu (400)
+│   │   ├── AuthenticationError.ts         # Neověřená identita (401)
+│   │   ├── AuthorizationError.ts          # Nedostatečná oprávnění (403)
+│   │   ├── NotFoundError.ts               # Entita nenalezena (404)
+│   │   ├── ConflictError.ts               # OCC konflikt verzí nebo unicitní kolize (409)
+│   │   └── DomainInvariantError.ts        # Porušení invariantu domény (422)
+│   ├── security/                         # Bezpečnostní abstrakce
+│   │   ├── ActorContext.ts               # Interface ActorContext objektu
+│   │   └── Policy.ts                     # Základní rozhraní pro autorizační politiky
+│   ├── clock/                            # Časová abstrakce
+│   │   └── Clock.ts                      # Rozhraní Clock (now(), today()) pro testovatelnost
+│   └── utils/                            # Čisté pomocné funkce bez byznys logiky
+│       ├── array-utils.ts
+│       └── string-utils.ts
+│
+├── database/                             # Fyzická databáze a správa schématu (Drizzle Kit)
+│   ├── schema/                           # Drizzle tabulková schémata, indexy a constrainty
+│   │   ├── users.table.ts
+│   │   ├── sessions.table.ts
+│   │   ├── boards.table.ts
+│   │   ├── memberships.table.ts
+│   │   ├── areas.table.ts
+│   │   ├── tasks.table.ts
+│   │   ├── task-participants.table.ts
+│   │   ├── personal-notes.table.ts
+│   │   ├── notifications.table.ts
+│   │   ├── audit-log.table.ts
+│   │   ├── outbox.table.ts
+│   │   └── relations.ts                  # Drizzle relations definice pro joiny
+│   ├── migrations/                       # Drizzle Kit generované verzované SQL migrace
+│   │   └── 0000_initial_schema.sql
+│   └── drizzle.config.ts                 # Konfigurace Drizzle Kitu (cesty ke schématům a DB URL)
+│
+├── tests/                                # Testovací suita projektu (Vitest + Playwright)
+│   ├── unit/                             # Rychlé unit testy doménových entit a invariantů
+│   │   ├── modules/tasks/
+│   │   ├── modules/boards/
+│   │   └── shared/
+│   ├── application/                      # Testy use cases s mockovanými porty
+│   │   └── modules/tasks/
+│   ├── integration/                      # Integrační testy s reálnou PostgreSQL databází
+│   │   ├── database/repositories/
+│   │   ├── events/outbox/
+│   │   └── concurrency/occ.test.ts
+│   ├── api/                              # Testy HTTP Route Handlerů a Zod validace
+│   │   ├── tasks-api.test.ts
+│   │   └── boards-api.test.ts
+│   ├── e2e/                              # Playwright testy kritických uživatelských toků
+│   │   ├── auth.spec.ts
+│   │   ├── task-lifecycle.spec.ts
+│   │   └── board-collaboration.spec.ts
+│   ├── fixtures/                         # Testovací data a seed skripty
+│   └── helpers/                          # Pomocné testovací nástroje (test DB container helper)
+│
+├── public/                               # Veřejné statické soubory (favicon, ikony, manifest)
+├── docs/                                 # Kompletní projektová a architektonická dokumentace
+│   ├── 000_Postup_vzniku_projektu_s_Ai.md
+│   ├── 010_Vize_a_cil.md
+│   ├── 020_Pozadavky.md
+│   ├── 030_Funkcni_model.md
+│   ├── 040_Uzivatelske_scenare.md
+│   ├── 050_Architektura.md
+│   ├── 060_Roadmapa.md
+│   ├── 070_Testovani.md
+│   └── 080_Co_projekt_umi.md
+│
+├── .env.example                          # Vzor proměnných prostředí (bez tajných klíčů)
+├── .gitignore                            # Ignorované soubory v Gitu
+├── docker-compose.yml                    # Konfigurace produkčního i lokálního PostgreSQL kontejneru
+├── Dockerfile                            # Multi-stage produkční build aplikace
+├── eslint.config.mjs                     # ESLint 9 Flat Config (pravidla importů a typů)
+├── package.json                          # Závislosti projektu (Next.js, Drizzle, Better Auth atd.)
+├── package-lock.json                     # Deterministický lock soubor npm
+├── prettier.config.mjs                   # Konfigurace formátování kódu
+└── tsconfig.json                         # TypeScript Strict Mode konfigurace s path aliases (@/*)
+```
+
+---
+
+### 35.3 Presentation a Routing vrstva: Next.js 16 App Router (`app/`)
+Adresář `app/` slouží výhradně jako **frameworková prezentační a směrovací (routing) vrstva**.
+
+#### Co do `app/` PATŘÍ:
+* **Server Components:** Zajišťují prvotní načtení dat (SSR) voláním aplikačních use cases nebo query služeb na serveru.
+* **Client Components:** Interaktivní UI prvky označené `"use client"` (např. dialogy Radix UI, formuláře s okamžitou odezvou, drag-and-drop na nástěnce).
+* **Layouts (`layout.tsx`):** Kompozice společných obalových struktur (záhlaví, postranní panel, navigace).
+* **Stavové stránky:** `loading.tsx` (skeletony), `error.tsx` (záchytné hranice neošetřených chyb), `not-found.tsx`.
+* **Route Handlers (`route.ts`):** HTTP endpointy pro komunikaci s klientem a externími voláními.
+
+#### Co do `app/` KATEGORICKY NEPATŘÍ:
+* **Doménová byznys pravidla:** Žádná logika přechodu stavů úkolu nebo výpočtu oprávnění.
+* **Přímé SQL dotazy a Drizzle volání:** V komponentách ani routách nesmí být psán raw SQL ani volány Drizzle selecty.
+* **Implementace repozitářů:** Repozitáře patří do infrastruktury.
+* **Hluboká autorizační logika:** Komponenty nesmí samy rozhodovat o bezpečnosti, pouze se dotazují na oprávnění pro vykreslení prvků (role-aware UI).
+
+---
+
+### 35.4 Route Groups a oddělení veřejných a chráněných zón
+Využíváme mechanismus **Route Groups** v Next.js (adresáře v závorkách, které neovlivňují URL adresu):
+
+1. **`app/(public)/`:**
+   * Určeno pro nepřihlášené návštěvníky: `/login`, `/recovery`.
+   * Využívá zjednodušený centrální layout bez navigační lišty aplikace.
+2. **`app/(authenticated)/`:**
+   * Určeno pro přihlášené uživatele: `/boards`, `/boards/[boardId]`, `/tasks/[taskId]`, `/my-work`, `/notifications`, `/profile`.
+   * Sdílí komplexní layout aplikace (výběr Nástěnky, navigační menu, notifikační indikátor, profil).
+
+> [!WARNING]
+> **Route Group NENÍ bezpečnostní hranicí.** Umístění stránky do složky `(authenticated)` je pouze organizační vzor pro sdílení layoutu. Skutečné ověření identity (`ActorContext`) a autorizace přístupu musí proběhnout na serveru při každém požadavku v `layout.tsx` nebo `page.tsx`!
+
+---
+
+### 35.5 Struktura API Route Handlerů (`app/api/`) a transportní hranice
+Route Handlery v `app/api/` představují transportní rozhraní pro REST-like HTTP JSON API (ADR-010):
+* **Odpovědnost handlera:**
+  1. Přijmout příchozí `Request`.
+  2. Získat `ActorContext` z ověřené session.
+  3. Deserializovat a validovat JSON tělo nebo query parametry pomocí příslušného Zod DTO schématu (`modules/*/api/dto`).
+  4. Předat data příslušnému aplikačnímu Use Case (např. `CreateTaskUseCase`).
+  5. Zachytit vrácený `Result<T, AppError>`.
+  6. Namapovat výsledek na standardizovaný JSON formát a odpovídající HTTP status kód (200, 201, 400, 401, 403, 404, 409, 500).
+* **Zákaz byznys logiky:** Handler nesmí sám provádět transakce, modifikovat databázi ani vyhodnocovat autorizační matice. Je pouhým transportním adaptérem.
+
+---
+
+### 35.6 Modulární struktura systému (`modules/`)
+Základem modulárního monolitu je rozdělení doménové a aplikační logiky do samostatných modulů pod adresářem `modules/`:
+
+| Modul | Odpovědnost a rozsah |
+| :--- | :--- |
+| **`auth`** | Řešení identity, mapování Better Auth session na interní `ActorContext`, revokace relací. |
+| **`users`** | Správa uživatelských profilů, globální role (`ADMIN`), aktivace/deaktivace uživatelů. |
+| **`boards`** | Agregát Nástěnka, správa životního cyklu nástěnky, atomický převod vlastnictví (Ownership transfer). |
+| **`membership`**| Správa členství na Nástěnce, role (`OWNER`, `MANAGER`, `MEMBER`), dodržování limitu max. 1 manažera. |
+| **`areas`** | Správa tématických a prostorových oblastí na Nástěnce, validace smazání oblasti vůči existujícím úkolům. |
+| **`tasks`** | Hlavní pracovní agregát: životní cyklus úkolu, hlavní řešitel, spoluřešitelé, OCC verzování, soukromé poznámky. |
+| **`notifications`**| Vytváření a doručování in-app notifikací podle definované Recipient Policy. |
+| **`audit`** | Centrální, neměnný (append-only) audit citlivých a destruktivních operací (`DELETE_TASK`, `DELETE_AREA`). |
+| **`search`** | Autorizované vyhledávání a filtrování dat v rámci povoleného rozsahu uživatele (Authorized Query Scope). |
+
+Každý modul má strukturu přizpůsobenou svým potřebám (např. modul `audit` nepotřebuje složité doménové přechody, ale důkladný append-only port). Struktura následuje odpovědnosti, nikoliv dogmatickou šablonu.
+
+---
+
+### 35.7 Doménová vrstva uvnitř modulu (`module/domain/`) a pravidla izolace
+V adresáři `modules/<module>/domain/` sídlí jádro byznys logiky:
+* **Obsah:** Doménové entity (např. `Task`), hodnotové objekty (Value Objects), doménové invarianty a pravidla platnosti stavových přechodů, doménové události (`TaskCreatedEvent`).
+* **Zákaz externích závislostí:** Doménová vrstva je technologicky čistá. Nesmí obsahovat žádné importy z:
+  * Next.js nebo Reactu,
+  * Drizzle ORM nebo SQL knihoven,
+  * Better Auth,
+  * Pino nebo jiných loggerů,
+  * Browser API.
+
+---
+
+### 35.8 Aplikační vrstva uvnitř modulu (`module/application/`) a Use Cases
+Adresář `modules/<module>/application/` obsahuje aplikační use cases představující konkrétní případy užití systému:
+* **Pojmenování:** Use cases jsou pojmenovány podle doménových operací ze Step 7, nikoliv jako obecný CRUD:
+  * `CreateTaskUseCase`, `AssignTaskUseCase`, `ChangeTaskStatusUseCase`,
+  * `DeleteTaskUseCase` (řízené fyzické smazání s potvrzením `SMAZAT`),
+  * `TransferBoardOwnershipUseCase`, `AddMemberUseCase`.
+* **Role Use Case:**
+  1. Přijímá validovaná data a `ActorContext`.
+  2. Spouští autorizační kontrolu voláním příslušné Policy.
+  3. Načítá doménové entity přes rozhraní repozitáře (Port).
+  4. Vyvolává doménové metody na entitách.
+  5. V rámci transakce ukládá změny do repozitáře a zapisuje vzniklé události do Outboxu.
+  6. Vrací výsledek jako `Result<TResponse, AppError>`.
+
+---
+
+### 35.9 Repozitáře: Rozhraní (Ports) vs. Infrastrukturní implementace (Adapters)
+Důsledně uplatňujeme architekturu Portů a Adaptérů:
+* **Port (Rozhraní):** Umístěn v `modules/<module>/application/ports/` (např. `ITaskRepository.ts`). Definuje metody vyžadované aplikací (`findById`, `save`, `delete`, `findByBoardId`). Zde se pracuje výhradně s doménovými entitami a Branded IDs.
+* **Adaptér (Implementace):** Umístěn v `infrastructure/database/repositories/` (např. `DrizzleTaskRepository.ts`). Implementuje rozhraní portu pomocí Drizzle ORM a SQL dotazů nad PostgreSQL.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  modules/tasks/application/                                 │
+│  └── Use Cases (např. AssignTaskUseCase)                   │
+│            │                                                │
+│            ▼                                                │
+│  modules/tasks/application/ports/ITaskRepository.ts (Port) │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ implementuje rozhraní
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│  infrastructure/database/repositories/                      │
+│  └── DrizzleTaskRepository.ts (Adaptér)                     │
+│            │                                                │
+│            ▼                                                │
+│  PostgreSQL 18 (Drizzle ORM dotazy a transakce)             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 35.10 Databázová struktura (`database/`) a oddělení Domain / Persistence / DTO
+V repozitáři existují **tři striktně oddělené modely dat**, které nesmí být vzájemně zaměňovány:
+
+1. **API DTO (`modules/*/api/dto/`):** Tvar dat přenášený přes HTTP síť. Validován Zod schématy. Obsahuje pouze pole relevantní pro klienta.
+2. **Domain Model (`modules/*/domain/`):** Bohaté doménové objekty zapouzdřující stav, invarianty a metody pro změnu stavu (např. `task.assignTo(userId, actorContext)`).
+3. **Persistence Model (`database/schema/`):** Definice tabulek a relací v Drizzle ORM (`tasks.table.ts`). Reprezentuje fyzickou strukturu řádků v PostgreSQL včetně primárních/cizích klíčů a databázových constraintů.
+
+Mapování mezi těmito třemi modely provádějí dedikované mapovací funkce na hranicích vrstev (např. uvnitř repozitáře při čtení/zápisu do DB a v use case při tvorbě výstupního DTO).
+
+---
+
+### 35.11 Infrastrukturní hranice Drizzle ORM a pravidla importů
+Drizzle ORM je považován za čistě infrastrukturní technologii:
+* **Povoleno importovat Drizzle:** Výhradně v `infrastructure/database/` a `database/schema/`.
+* **Zakázáno importovat Drizzle:** V `modules/*/domain/`, `modules/*/application/` (mimo infrastrukturní adaptéry), v `app/` (komponenty a layouts) a v `shared/`.
+
+---
+
+### 35.12 Infrastrukturní hranice Better Auth a integrace s `User.id`
+Better Auth spravuje autentizační tabulky a relace na nízké úrovni:
+* Konfigurace Better Auth je zapouzdřena v `infrastructure/auth/better-auth.config.ts`.
+* Route handler `app/api/auth/[...betterAuth]/route.ts` slouží pouze pro předání požadavků do Better Auth enginu.
+* **Integrace s doménou:** Doménová entita `User` a její identifikátor `UserId` jsou odděleny od přihlašovacích údajů. Adaptér `BetterAuthAdapter.ts` po úspěšném ověření session tokenu vyhledá odpovídající záznam v tabulce `users` a sestaví `ActorContext`.
+
+---
+
+### 35.13 ActorContext: Server-side sestavení a životní cyklus
+`ActorContext` představuje ověřenou identitu a kontext volajícího v rámci zpracování požadavku:
+* **Definice rozhraní (`shared/security/ActorContext.ts`):**
+  ```typescript
+  export interface ActorContext {
+    readonly userId: UserId;
+    readonly sessionId: string;
+    readonly globalRole: GlobalRole; // 'ADMIN' | 'USER'
+    readonly isActive: boolean;
+    readonly email: string;
+  }
+  ```
+* **Životní cyklus:**
+  1. Klient pošle request s `HttpOnly` cookie obsahující session token.
+  2. Middleware / Server helper na serveru token ověří dotazem do databáze (žádný nestavový JWT).
+  3. Zkontroluje se, zda je uživatel aktivní (`is_active = true`). Pokud je uživatel deaktivován, session je okamžitě odmítnuta.
+  4. Sestavený `ActorContext` je předán do Use Case. Práva na konkrétní Nástěnce (BoardRole) jsou načítána čerstvě z databáze v rámci autorizační politiky dané operace.
+
+---
+
+### 35.14 Autorizační Policy vrstva (`application/policies/`)
+Autorizace je izolována v aplikační vrstvě jednotlivých modulů:
+* Každý doménový modul obsahuje svou Policy třídu (např. `TaskPolicy`, `BoardPolicy`, `MembershipPolicy`).
+* **Vstup autorizační kontroly:**
+  * `actor`: Instance `ActorContext`,
+  * `board`: Cílová Nástěnka a stav členství volajícího (`Membership`),
+  * `target`: Cílová entita operace (např. `Task`),
+  * `action`: Požadovaná akce (např. `TaskAction.DELETE_TASK`, `BoardAction.TRANSFER_OWNERSHIP`).
+* **Výstup:** `boolean` nebo vyhození `AuthorizationError`.
+* UI prvky se mohou dotazovat Policy funkcí pro podmíněné zobrazení tlačítek, avšak **konečné a závazné ověření provádí vždy Use Case na serveru**.
+
+---
+
+### 35.15 API DTO a transportní modely
+Všechna data vstupující přes API jsou definována jako TypeScript typy odvozené z validačních schémat Zod:
+* Umístění: `modules/<module>/api/dto/` (např. `CreateTaskDto.ts`, `UpdateTaskDto.ts`).
+* Příklad DTO schématu:
+  ```typescript
+  import { z } from 'zod';
+
+  export const UpdateTaskDtoSchema = z.object({
+    title: z.string().min(1).max(255).optional(),
+    description: z.string().max(5000).nullable().optional(),
+    priority: z.enum(['NORMAL', 'URGENT']).optional(),
+    areaId: z.string().uuid().optional(),
+    dueDate: z.string().datetime().nullable().optional(),
+  });
+
+  export type UpdateTaskDto = z.infer<typeof UpdateTaskDtoSchema>;
+  ```
+
+---
+
+### 35.16 Víceúrovňová validační architektura (Zod ➔ Application ➔ Domain ➔ DB)
+Validace dat probíhá v systému ve čtyřech komplementárních vrstvách:
+
+```text
+1. VSTUPNÍ VALIDACE (Transportní / Zod):
+   - syntaxe, formáty řetězců, limity délek, povinná pole v JSON
+   ▼
+2. APLIKAČNÍ VALIDACE (Use Case / Policy):
+   - ověření oprávnění volajícího, existence závislých entit (zda existuje Board a Area)
+   ▼
+3. DOMÉNOVÁ VALIDACE (Entity Invarianty):
+   - byznys integrita (zda lze úkol v daném stavu dokončit, zda má úkol řešitele při změně stavu)
+   ▼
+4. DATABÁZOVÁ INTEGRITA (PostgreSQL Constrainty):
+   - cizí klíče, unicitní indexy (právě 1 Owner, max 1 Manager), CHECK constrainty
+```
+
+---
+
+### 35.17 Typová hierarchie chyb (`shared/errors/`) a mapování na HTTP
+Systém používá typovanou hierarchii doménových a aplikačních chyb v `shared/errors/`:
+* Všechny chyby dědí ze základní třídy `AppError`.
+* **Mapování interních chyb na transportní HTTP vrstvu:**
+
+| Třída chyby | Význam | HTTP Status |
+| :--- | :--- | :---: |
+| `ValidationError` | Neplatný formát dat na vstupu (chyba ze Zod) | `400 Bad Request` |
+| `AuthenticationError` | Neplatná nebo expirovaná session | `401 Unauthorized` |
+| `AuthorizationError` | Uživatel nemá oprávnění pro danou akci | `403 Forbidden` |
+| `NotFoundError` | Cílový objekt neexistuje | `404 Not Found` |
+| `ConflictError` | OCC konflikt verzí (`If-Match`) nebo unicitní kolize | `409 Conflict` |
+| `DomainInvariantError` | Porušení byznys pravidla domény | `422 Unprocessable Entity` |
+| `InfrastructureError` | Výpadek databáze nebo sítě | `500 Internal Server Error` |
+
+Doménové a aplikační vrstvy nepracují s HTTP kódy; vyvolávají nebo vracejí instanci příslušného `AppError`.
+
+---
+
+### 35.18 Životní cyklus a umístění Domain Events
+Doménové události (např. `TaskCreatedEvent`, `TaskAssignedEvent`, `BoardSoftDeletedEvent`) vznikají v doménové vrstvě:
+* Událost představuje neměnný fakt o tom, co se v systému odehrálo v minulém čase.
+* Nese ID agregátu, typ události, časové razítko vzniku v UTC a minimální potřebná data (payload).
+* **Zlaté pravidlo:** Událost je perzistována do Outboxu v rámci **stejné databázové transakce** jako změna doménového agregátu. Pokud transakce selže, událost nevznikne.
+
+---
+
+### 35.19 Architektura a struktura Transactional Outboxu (`infrastructure/events/`)
+Infrastruktura Outboxu zajišťuje spolehlivé doručení událostí (At-Least-Once):
+* **`outbox.schema.ts`:** Drizzle definice tabulky `outbox` (`id`, `event_type`, `aggregate_type`, `aggregate_id`, `payload`, `created_at`, `processed_at`, `retry_count`, `last_error`).
+* **`DrizzleOutboxRepository.ts`:** Zápis událostí do tabulky v rámci předané Drizzle transakce.
+* **`OutboxProcessor.ts`:** Pravidelný proces (volaný in-process workerem), který vyhledá nezpracované záznamy (`processed_at IS NULL`), uzamkne je a předá `EventDispatcheru`. Po úspěšném odbavení nastaví `processed_at = NOW()`.
+
+---
+
+### 35.20 Struktura notifikačního modulu (`modules/notifications/`)
+Modul notifikací odděluje doručování zpráv od doménových stavů:
+* Vytváří a spravuje entity `Notification` v databázi pro zobrazení v uživatelském rozhraní (In-app notifikace).
+* Podporuje označení za přečtené (`MarkAsRead`) a stránkovaný přehled zpráv.
+* **Invariant:** Notifikační modul nikdy přímo nemění stav úkolů ani nástěnek. Pouze reaguje na doménové události předané z Outboxu.
+
+---
+
+### 35.21 Centrální auditní vrstva (`modules/audit/`)
+Auditování citlivých a destruktivních operací je centralizované:
+* Tabulka `audit_log` uchovává neměnné záznamy o akcích (`actor_id`, `action`, `target_type`, `target_id`, `board_id`, `details`, `timestamp`).
+* Zápis do `audit_log` probíhá atomicky v téže transakci jako prováděná operace.
+* **Nezávislost na životním cyklu:** Záznam v `audit_log` přetrvává i po fyzickém smazání úkolu nebo smazání oblasti. Žádný modul si nesmí vytvářet vlastní izolovaný a nekompatibilní auditní mechanismus.
+
+---
+
+### 35.22 Vyhledávací modul (`modules/search/`) a Authorized Query Scope
+Vyhledávání a filtrace jsou umístěny v `modules/search/`:
+* Dotazovací služba využívá nativní fulltextové vyhledávání PostgreSQL (`tsvector`, český slovník) v kombinaci s trigramovým indexem `pg_trgm`.
+* **Authorized Query Scope:** Vyhledávací služba přijímá `ActorContext` a do SQL dotazu povinně přidává autorizační klauzuli:
+  ```sql
+  WHERE board_id IN (SELECT board_id FROM memberships WHERE user_id = :actorUserId)
+  ```
+  Tím je garantováno, že uživatel nikdy neuvidí výsledky z nástěnek, jejichž není členem.
+
+---
+
+### 35.23 Oddělení zápisové (Command) a čtecí (Query) cesty
+V souladu se Step 14 uplatňujeme pragmatické oddělení zápisů a čtení:
+
+```text
+ZÁPISOVÁ CESTA (Command / Write Path):
+API Route ➔ Application Use Case ➔ Domain Entity ➔ IRepository ➔ DB Transakce + Outbox ➔ Commit
+
+ČTECÍ CESTA (Query / Read Path):
+API Route ➔ Query Service (Authorized Scope) ➔ Optimalizovaný SQL Select / DTO projekce ➔ Response
+```
+
+Čtecí dotazy (např. zobrazení seznamu úkolů na Nástěnce) nemusí rekonstruovat plné doménové agregáty, ale mohou provádět přímé efektivní projekce (JOINy) do transportních DTO, což výrazně šetří paměť i CPU.
+
+---
+
+### 35.24 Sdílená vrstva (`shared/`) a pravidla proti degeneraci na „skladiště“
+Adresář `shared/` je určen výhradně pro **skutečně sdílené, doménově nezávislé abstrakce**:
+* **Povoleno v `shared/`:** Branded ID typy, definice třídy `Result<T, E>`, hierarchie chyb `AppError`, rozhraní `Clock`, interface `ActorContext`, obecné validační helpery.
+* **PŘÍSNĚ ZAKÁZÁNO v `shared/`:**
+  * Doménová byznys pravidla (např. logika stavů úkolu),
+  * Specifická autorizační pravidla nástěnek,
+  * SQL dotazy nebo Drizzle schémata konkrétních modulů,
+  * Odkládání nedokončeného kódu.
+
+---
+
+### 35.25 Pravidla pro utility (`shared/utils/`) a zákaz god-utils
+Složka `shared/utils/` smí obsahovat pouze úzce zaměřené, čisté funkce (pure functions) bez vedlejších účinků:
+* Např. bezpečné formátování řetězců, pomocné funkce pro práci s poli.
+* **Zákaz „god-utils“:** Je zakázáno vytvářet soubory typu `general-helpers.ts` nebo `utils.ts`, které koncentrují nesouvisející logiku z celého projektu.
+
+---
+
+### 35.26 Infrastrukturní vrstva (`infrastructure/`) a její komponenty
+Infrastrukturní vrstva realizuje technické propojení se světem:
+* `infrastructure/database/`: PostgreSQL pool a repozitáře Drizzle.
+* `infrastructure/auth/`: Better Auth adaptér.
+* `infrastructure/events/`: Outbox repozitář a asynchronní worker.
+* `infrastructure/logging/`: Konfigurace loggeru Pino.
+* `infrastructure/clock/`: Implementace reálného systémového času.
+* `infrastructure/configuration/`: Načítání a validace `.env`.
+* `infrastructure/jobs/`: Plánovač úloh s DB zámky.
+
+---
+
+### 35.27 Konfigurace a správa secrets (`infrastructure/configuration/`)
+Správa proměnných prostředí probíhá přes modul `env.ts` s využitím schématu Zod:
+* Při startu aplikace se spustí validace všech proměnných v `process.env`.
+* Pokud chybí povinná proměnná (např. `DATABASE_URL`, `BETTER_AUTH_SECRET`), proces okamžitě spadne s jasnou chybovou hláškou (Fail-Fast princip).
+* V kódu je zakázáno přímé čtení `process.env.NAZEV`; importuje se typovaný objekt `env` z `infrastructure/configuration/env.ts`.
+
+---
+
+### 35.28 Logování a observability (`infrastructure/logging/`)
+Logování je řešeno centrálně pomocí knihovny Pino:
+* Veškerý výstup je ve formátu strukturovaného JSON do standardního výstupu (stdout).
+* Každý příchozí request obdrží unikátní `correlationId` (či `requestId`), který je automaticky přikládán ke všem navazujícím logům.
+* Automatická sanitizace hesel, session tokenů a osobních údajů (PII).
+* Doménové entity Pino neimportují; logování probíhá v aplikačních use cases a infrastrukturních adaptérech.
+
+---
+
+### 35.29 Časová abstrakce (`Clock`) pro determinismus a testovatelnost
+Veškerá práce s časem je abstrahována rozhraním `Clock`:
+```typescript
+export interface Clock {
+  now(): Date;
+  isoString(): string;
+}
+```
+* Produkční kód používá `SystemClock` (vrací aktuální systémový čas v UTC).
+* Testy používají `FrozenClock` nebo `ManualClock` (umožňuje nastavit libovolný fixní čas a ověřovat expiraci sessions či termíny úkolů deterministicky).
+* Přímé volání `new Date()` v doménových a aplikačních use cases je zakázáno.
+
+---
+
+### 35.30 Testovací architektura a struktura (`tests/`)
+Testovací suita je hierarchicky rozdělena podle pyramidy testů:
+1. **`tests/unit/`:** Testy čisté domény a invariantů bez I/O operací a bez databáze. Běží v řádu milisekund (Vitest).
+2. **`tests/application/`:** Testy use cases s mockovanými porty repozitářů. Ověřují aplikační toky a volání politik.
+3. **`tests/integration/`:** Testy s reálnou běžící PostgreSQL databází v Dockeru. Testují Drizzle repozitáře, transakce, constrainty a Outbox.
+4. **`tests/api/`:** Testy HTTP Route Handlerů (validace DTO, chybové kódy).
+5. **`tests/e2e/`:** Playwright testy v reálném prohlížeči pro klíčové uživatelské toky (přihlášení, kolaborace na nástěnce).
+
+---
+
+### 35.31 Kolokace testů vs. centralizované umístění
+Pro projekt volíme **hybridní model umístění testů**:
+* **Integrační, API a E2E testy** jsou soustředěny centrálně v adresáři `tests/` kvůli sdílení testovacích kontejnerů, seedů a konfigurací.
+* **Unit testy specifické pro daný modul** mohou být kolokovány přímo u zdrojových souborů (např. `Task.test.ts` vedle `Task.ts`), což vývojářům poskytuje okamžitý přehled při úpravách domény.
+
+---
+
+### 35.32 Veřejné rozhraní modulu (`index.ts`) a ochrana interních částí
+Každý modul v `modules/<module>/` musí mít soubor `index.ts`, který definuje jeho veřejné API (Public API):
+* Z modulu se exportují výhradně:
+  * Veřejné Use Cases,
+  * Rozhraní portů a DTO,
+  * Doménové události.
+* **Pravidlo zapouzdření:** Ostatní moduly a vrstvy nesmí provádět hluboké importy do vnitřních souborů modulu (např. `modules/tasks/domain/internal-helper.ts`). Smí importovat pouze z `@/modules/<module>`.
+
+---
+
+### 35.33 Mezimodulová komunikace a zákaz cyklických závislostí
+Moduly spolu komunikují dvěma způsoby:
+1. **Synchronně:** Voláním veřejného Use Case jiného modulu přes jeho veřejné rozhraní (např. modul `boards` ověřuje existenci uživatele voláním portu modulu `users`).
+2. **Asynchronně:** Prostřednictvím doménových událostí předávaných přes Transactional Outbox (např. `TaskCreatedEvent` vyvolá vytvoření záznamu v modulu `notifications`).
+
+> [!CAUTION]
+> **Cyklické závislosti mezi moduly jsou přísně zakázány.** Pokud modul A závisí na modulu B, modul B nesmí přímo záviset na modulu A (`A -> B -> A` je nepřípustné). V takovém případě musí být závislost otočena pomocí události nebo rozhraní v `shared/`.
+
+---
+
+### 35.34 Závazná matice povolených a zakázaných importů (Dependency Rules)
+
+Následující tabulka definuje striktní pravidla pro importy napříč celým projektem:
+
+| Zdrojová vrstva | Smí importovat | NESMÍ importovat |
+| :--- | :--- | :--- |
+| **`modules/*/domain`** | `shared/types`, `shared/errors`, `shared/clock` | `app/*`, `infrastructure/*`, `drizzle-orm`, `better-auth`, `pino`, `react`, `next` |
+| **`modules/*/application`**| `domain` téhož modulu, `ports`, `shared/*`, veřejné DTO jiných modulů | `infrastructure/*`, přímé Drizzle SQL, prezentační komponenty `app/*` |
+| **`infrastructure/*`** | `modules/*/application/ports`, `shared/*`, Drizzle, Better Auth, Pino, externí SDK | `app/*` (UI vrstva nesmí prosakovat do infrastruktury) |
+| **`app/api/*` (Routes)** | `modules/*/application` (Use Cases), `modules/*/api/dto`, `shared/*` | `modules/*/domain` (přímé obcházení use case), raw Drizzle dotazy do DB |
+| **`app/*` (UI / Pages)** | `modules/*/api/dto`, UI komponenty, `shared/*` | `infrastructure/database`, `drizzle-orm`, přímé volání DB repozitářů |
+
+Tato pravidla budou v následujícím kroku zafixována v konfiguraci ESLint (`no-restricted-imports`) a testována v CI pipeline.
+
+---
+
+### 35.35 Jmenné konvence (Naming Conventions)
+V celém projektu platí jednotný kódovací styl:
+* **Soubory a adresáře:** `kebab-case.ts` (např. `task-repository.ts`, `create-task.dto.ts`). Výjimkou jsou React komponenty a Next.js konvence (`page.tsx`, `layout.tsx`, `TaskCard.tsx`).
+* **Třídy, Rozhraní, Typy:** `PascalCase` (např. `TaskEntity`, `ITaskRepository`, `ActorContext`).
+* **Funkce a metody:** `camelCase` (např. `createTask`, `findActiveById`).
+* **Konstanty a Enum hodnoty:** `UPPER_SNAKE_CASE` (např. `MAX_TASK_TITLE_LENGTH`, `BoardRole.OWNER`).
+
+---
+
+### 35.36 Doménová terminologie a mapování interních názvů na české UX
+Aby nedocházelo ke zmatkům mezi kódem v angličtině a českým uživatelským rozhraním, je stanoven následující překladový slovník:
+
+| Interní název v kódu | Databázová tabulka | UX název v češtině | Role a kontext v systému |
+| :--- | :--- | :--- | :--- |
+| `User` | `users` | Uživatel | Globální entita identity uživatele |
+| `Board` | `boards` | Nástěnka | Samostatný pracovní prostor týmu |
+| `Membership` | `memberships` | Členství | Vazba uživatele na Nástěnku s rolí |
+| `Area` | `areas` | Oblast | Tématický okruh na Nástěnce |
+| `Task` | `tasks` | Úkol | Základní pracovní jednotka |
+| `assignee` | `assignee_id` | Hlavní řešitel | Člen zodpovědný za splnění úkolu |
+| `TaskParticipant` | `task_participants` | Spoluřešitel | Člen dobrovolně připojený k úkolu |
+| `Notification` | `notifications` | Notifikace | Uživatelské upozornění |
+| `OWNER` | `'OWNER'` | Vlastník | Zakladatel / hlavní správce Nástěnky |
+| `MANAGER` | `'MANAGER'` | Manažer / Správce | Provozní správce Nástěnky (max 1) |
+| `MEMBER` | `'MEMBER'` | Běžný člen | Standardní člen týmu Nástěnky |
+
+---
+
+### 35.37 Branded / Opaque ID typy pro silnou typovou integritu
+Pro eliminaci chyb záměny parametrů stejného primitivního typu (`string`) zavádíme Branded IDs v `shared/types/ids.ts`:
+```typescript
+declare const __brand: unique symbol;
+export type Brand<T, B> = T & { readonly [__brand]: B };
+
+export type UserId = Brand<string, 'UserId'>;
+export type BoardId = Brand<string, 'BoardId'>;
+export type TaskId = Brand<string, 'TaskId'>;
+export type AreaId = Brand<string, 'AreaId'>;
+export type MembershipId = Brand<string, 'MembershipId'>;
+export type NotificationId = Brand<string, 'NotificationId'>;
+```
+Díky tomu kompilátor TypeScriptu neumožní omylem předat `UserId` do funkce očekávající `TaskId`.
+
+---
+
+### 35.38 Result / Error Pattern pro aplikační vrstvu
+Aplikační Use Cases nepoužívají nekontrolované vyhazování výjimek (`throw new Error()`) pro očekávané byznys situace (např. konflikt verzí, neplatný stav). Používají typovaný návratový vzor `Result<T, E>`:
+```typescript
+export type Result<T, E = AppError> =
+  | { readonly success: true; readonly data: T }
+  | { readonly success: false; readonly error: E };
+
+export const ok = <T>(data: T): Result<T, never> => ({ success: true, data });
+export const err = <E>(error: E): Result<never, E> => ({ success: false, error });
+```
+Tento přístup nutí volajícího (např. API Route Handler) explicitně ošetřit úspěšné i chybové větve bez rizika pádu procesu.
+
+---
+
+### 35.39 Synchronní vs. asynchronní hranice v systému
+Architektura striktně dělí tok zpracování na dvě zóny:
+* **Synchronní zóna (během HTTP požadavku):**
+  * Autentizace a ověření `ActorContext`,
+  * Validace vstupního DTO,
+  * Vyhodnocení autorizační politiky,
+  * Provedení doménové logiky a kontrola invariantů,
+  * Databázová transakce (uložení změn agregátu + zápis do `audit_log` + zápis do `outbox`),
+  * Commit transakce a vrácení HTTP odpovědi klientovi.
+* **Asynchronní zóna (po commitu na pozadí):**
+  * Odbavení záznamu z tabulky `outbox` workerem,
+  * Vygenerování a uložení in-app notifikací pro příjemce,
+  * Zpracování dlouhotrvajících úloh.
+
+---
+
+### 35.40 In-process Scheduled Worker pro Outbox a úlohy na pozadí
+Zpracování Outboxu a úloh na pozadí zajišťuje lehký in-process worker (ADR-019):
+* Běží v rámci Node.js runtime aplikace na základě intervalového časovače.
+* **Zajištění exkluzivity:** Využívá PostgreSQL transakční advisory zámek:
+  ```sql
+  SELECT pg_try_advisory_xact_lock(424242);
+  ```
+  Pokud běží více instancí aplikace (např. při rolling deploymentu), zámek získá pouze jedna instance, čímž je vyloučeno zdvojené zpracování událostí.
+
+---
+
+### 35.41 Zdravotní a readiness endpointy (`/api/health`, `/api/ready`)
+Pro dohled a orchestraci (Docker, reverzní proxy) jsou definovány dva standardní endpointy:
+1. **`GET /api/health` (Liveness probe):** Rychlá kontrola, zda Node.js proces žije a reaguje na HTTP. Vrací `{ status: "ok", uptime: 1234 }`.
+2. **`GET /api/ready` (Readiness probe):** Ověřuje schopnost obsluhovat provoz (provede `SELECT 1` do PostgreSQL poolu). Pokud databáze neodpovídá, vrací status `503 Service Unavailable`. Endpoint nikdy nevrací citlivé systémové podrobnosti.
+
+---
+
+### 35.42 Životní cyklus bootstrapu aplikace (Bootstrap Sequence)
+Při startu produkčního nebo vývojového kontejneru probíhá inicializace v přesně definovaném pořadí:
+
+```text
+1. Start procesu (Node.js 24 LTS)
+   ↓
+2. Načtení a Zod validace proměnných prostředí (env.ts)
+   ↓ (při chybě: okamžitý pád procesu s chybovou zprávou)
+3. Inicializace strukturovaného loggeru Pino
+   ↓
+4. Inicializace PostgreSQL Connection Poolu
+   ↓
+5. Kontrola stavu migrací (Drizzle Kit check)
+   ↓
+6. Inicializace Better Auth runtime
+   ↓
+7. Registrace aplikačních modulů a Policy služeb
+   ↓
+8. Start HTTP serveru Next.js (navázání portu 3000)
+   ↓
+9. Spuštění in-process Outbox background workeru (s DB advisory lockem)
+   ↓
+10. Aplikace připravena k přijímání provozu (/api/ready vrací 200 OK)
+```
+
+---
+
+### 35.43 Detailní životní cyklus HTTP požadavku (Request Lifecycle)
+
+```text
+Klient (Browser / Fetch)
+   │
+   │ 1. HTTP Request (např. PATCH /api/tasks/123 s If-Match: "2")
+   ▼
+Next.js App Router (app/api/tasks/[taskId]/route.ts)
+   │
+   │ 2. Autentizační vrstva ověří cookie v DB ➔ sestaví ActorContext
+   ▼
+Task Route Handler
+   │
+   │ 3. Zod validace těla požadavku (UpdateTaskDto)
+   │ 4. Předání dat do UpdateTaskUseCase(dto, actorContext)
+   ▼
+UpdateTaskUseCase (Application Layer)
+   │
+   │ 5. Vyhodnocení TaskPolicy.canUpdate(actor, board, task) ➔ 403 pokud nepovoleno
+   │ 6. Načtení Task agregátu přes ITaskRepository
+   ▼
+Task Entity (Domain Layer)
+   │
+   │ 7. Kontrola OCC verze (entita.version === ifMatchVerze) ➔ ConflictError (409) při neshodě
+   │ 8. Provedení změn a validace doménových invariantů
+   │ 9. Vznik TaskUpdatedEvent
+   ▼
+Drizzle Unit of Work (Infrastructure Layer)
+   │
+   │ 10. ZAČÁTEK DB TRANSAKCE
+   │     ├─ UPDATE tasks SET ... WHERE id = 123 AND version = 2
+   │     ├─ INSERT INTO outbox (event_type, payload...)
+   │     └─ INSERT INTO audit_log (actor_id, action...)
+   │ 11. COMMIT TRANSAKCE
+   ▼
+Response Mapping
+   │
+   │ 12. Namapování výsledku na TaskDto
+   │ 13. Nastavení ETag hlavičky: "3"
+   ▼
+Klient přijímá 200 OK s aktualizovaným úkolem
+```
+
+---
+
+### 35.44 Tok chyb a jejich propagace (Error Flow)
+Propagace chyb je deterministická a zabraňuje úniku citlivých interních výjimek:
+
+```text
+Vznik chyby (např. OCC kolize ve vrstvě Domain/Repository)
+   ↓
+Vytvoření typované chyby: return err(new ConflictError("Task was modified by another user", currentVersion))
+   ↓
+Use Case vrátí Result.fail(ConflictError)
+   ↓
+Route Handler zachytí ConflictError
+   ↓
+Mapovač chyb vygeneruje standardní JSON odpověď:
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "Úkol byl mezitím upraven jiným uživatelem. Načtěte prosím aktuální data.",
+    "currentVersion": 3
+  }
+}
+a nastaví HTTP status 409 Conflict.
+   ↓
+Klientské UI (React komponenta) zachytí status 409 a přepne se do stavu Conflict UX (viz Step 13).
+```
+
+---
+
+### 35.45 Pravidla pro bezestavový import modulů (Module Bootstrap)
+Při pouhém importu TypeScript souboru nesmí docházet k žádným vedlejším účinkům (Side Effects):
+* **Zákaz:** Žádný soubor nesmí při svém importu otevírat síťová spojení, provádět databázové dotazy ani spouštět intervalové časovače.
+* **Pravidlo:** Veškerá inicializace probíhá přes explicitní tovární funkce (Factory functions) volané během centrálního bootstrapu aplikace. Tím je zajištěna stoprocentní testovatelnost a izolace unit testů.
+
+---
+
+### 35.46 Izolace prostředí (Development, Test, Production)
+Konfigurace a data jsou striktně odděleny mezi prostředími:
+
+| Aspekt | Development | Test | Production |
+| :--- | :--- | :--- | :--- |
+| **Databáze** | Lokální PostgreSQL v Dockeru (`nastenka_dev`) | Izolovaná testovací DB (`nastenka_test`) | Zabezpečený PostgreSQL cluster (`nastenka_prod`) |
+| **Logování** | Pino `pino-pretty` (barevný čitelný výstup) | Tichý režim (`silent` / pouze errory) | Čistý jednorázový JSON na stdout |
+| **Better Auth** | Lokální cookies (HTTP) | Mockované sessions v paměti | `Secure; HttpOnly; SameSite=Lax` přes HTTPS |
+| **Worker** | Spuštěn v procesu | Vypnut (spouštěn manuálně v testech) | Spuštěn v procesu s DB advisory lockem |
+
+Testovací prostředí **nikdy nesmí používat produkční databázi ani reálné API klíče**.
+
+---
+
+### 35.47 Fáze budoucího bootstrapu (Roadmapa implementace Step 17)
+Skutečná implementace projektu proběhne v následujícím kroku (Step 17) podle této fáze po fázi strukturované roadmapy:
+
+```text
+Phase A: Repozitář a tooling bootstrap (package.json, tsconfig, ESLint 9, Prettier)
+Phase B: Aplikační kostra Next.js 16 (App Router, Tailwind v4, základní layouty)
+Phase C: Databáze a migrace (Drizzle ORM, PostgreSQL schema, Docker Compose, úvodní migrace)
+Phase D: Autentizace a session (Better Auth integrace, ActorContext middleware)
+Phase E: Autorizační vrstva (Policy framework a základní pravidla)
+Phase F: Modul Board & Membership (agregáty, use cases, správa rolí a převod vlastníka)
+Phase G: Modul Area & Task (životní cyklus úkolu, řešitelé, OCC verzování, řízený hard-delete)
+Phase H: Eventy a Transactional Outbox (tabulka, repozitář, in-process worker)
+Phase I: Notifikace a Audit (in-app notifikace, append-only auditní logování)
+Phase J: Vyhledávání a FTS (PostgreSQL fulltext, trigramy, autorizovaný scope)
+Phase K: UI dokončení (klientské komponenty, formuláře, loading/error/conflict stavy)
+Phase L: Testovací zpevnění (kompletní pokrytí Vitest + Playwright, CI GitHub Actions)
+```
+
+---
+
+### 35.48 Automatizované kontroly architektonické integrity (Fitness Checks)
+Pro zachování definovaných architektonických pravidel budou v implementační fázi nasazeny automatizované nástroje:
+1. **ESLint `no-restricted-imports`:** Automaticky selže build, pokud by `modules/*/domain/` importoval cokoliv z `drizzle-orm`, `next` nebo `infrastructure`.
+2. **TypeScript Strict Mode (`tsc --noEmit`):** Zákaz typu `any`, zákaz implicitních návratů, kontrola nullovatelnosti a Branded IDs.
+3. **Dependency Cruiser (`depcruise`):** Pravidelná kontrola zakazující cyklické závislosti mezi moduly a importy do interních souborů cizích modulů.
+
+---
+
+### 35.49 Implementační checklist před zahájením kódování
+Před zahájením implementace v kroku Step 17 musí být splněny všechny body tohoto checklistu:
+
+- [x] Technologický stack schválen (Step 15, ADR-001 až ADR-027)
+- [x] Modulární hranice monolitu definovány (`modules/*`)
+- [x] Referenční adresářová struktura navržena a zdokumentována
+- [x] Hranice prezentační vrstvy Next.js App Routeru vymezena (`app/`)
+- [x] Transportní hranice a role API Route Handlerů definována (`app/api/`)
+- [x] Autentizační hranice (Better Auth) a integrace s `User.id` specifikována
+- [x] Autorizační hranice (ActorContext a doménové Policies) specifikována
+- [x] Databázová hranice a oddělení Domain / Persistence / DTO vyjasněno
+- [x] Hranice repozitářů (Ports & Adapters) definována
+- [x] Transakční Outbox a asynchronní worker specifikován
+- [x] Notifikační model a Recipient Policy specifikována
+- [x] Centrální neměnný audit specifikován
+- [x] Authorized Query Scope pro vyhledávání a čtení zafixován
+- [x] Testovací architektura (Unit, Application, Integration, API, E2E) navržena
+- [x] Správa konfigurace a validace proměnných prostředí přes Zod navržena
+- [x] Pravidla závislostí a zakázaných importů definována
+- [x] Jmenné konvence a Branded IDs definovány
+- [x] Sekvence bootstrapu aplikace a životní cyklus požadavku specifikovány
+- [x] Závazný Git workflow (lokální commit, push výhradně vlastníkem) zafixován
+
+---
+
+### 35.50 Rozsah Step 16 vs. nadcházející Step 17 (Zákaz předčasné implementace)
+* **Step 16 (tento krok):** Pouze definice a schválení implementační a bootstrap architektury v dokumentaci `docs/050_Architektura.md`. Žádné změny na disku mimo dokument.
+* **Step 17 (nadcházející krok):** Fyzické založení souborů projektu, vytvoření `package.json`, instalace schválených npm balíčků, konfigurace TypeScriptu, ESLintu, Prettieru a zprovoznění základní kostry aplikace.
+
+---
+
+### 35.51 Bezpečnostní pravidla pro Antigravity během implementace
+Před každým budoucím implementačním krokem musí Antigravity bezvýhradně dodržet následující proces:
+1. Důkladně prostudovat zadání a příslušné pasáže projektové dokumentace (`docs/`).
+2. Zkontrolovat čistotu a stav lokálního Git repozitáře (`git status`).
+3. Měnit a vytvářet výhradně soubory, které spadají do schváleného rozsahu daného kroku.
+4. Spustit formátovací a verifikační kontroly (`git diff --check`, lint, typecheck, testy).
+5. Vytvořit lokální atomický Git commit s výstižnou zprávou.
+6. **Za žádných okolností nespouštět `git push`.**
+
+---
+
+### 35.52 Technické a implementační invarianty Step 16 (25 závazných pravidel)
+
+1. **Modulární monolit:** Systém je fyzicky organizován jako modulární monolit v jednom repozitáři se striktně oddělenými vrstvami a doménovými moduly.
+2. **Prezentační hranice App Routeru:** Adresář `app/` slouží výhradně pro routing, SSR kompozici a klientskou interakci; nesmí obsahovat doménovou ani SQL logiku.
+3. **Transportní role API:** Route Handlery v `app/api/` pouze validují transportní DTO přes Zod, předávají data Use Case a vrací HTTP JSON; neobsahují byznys pravidla.
+4. **Izolace autentizace:** Autentizace (Better Auth) je infrastrukturní detail; doména nezná přihlašovací protokoly ani externí providery.
+5. **Izolace autorizace:** Autorizace je prováděna výhradně na serveru v aplikační vrstvě přes doménové Policies; UI omezení nejsou bezpečnostní bariérou.
+6. **Server-side ActorContext:** `ActorContext` je vždy dynamicky sestavován na serveru z platné session a čerstvého stavu uživatele v DB; nespoléhá na statická práva v klientském tokenu.
+7. **Technologická nezávislost domény:** Vrstva `modules/*/domain/` nesmí obsahovat žádné importy z Next.js, Reactu, Drizzle ORM, Better Auth, Pino ani browser API.
+8. **Drizzle jako infrastrukturní detail:** Drizzle ORM je omezen výhradně na `infrastructure/database/` a `database/schema/`; žádná jiná vrstva k němu nemá přímý přístup.
+9. **Abstrakce perzistence (Porty):** Aplikační vrstva přistupuje k databázi výhradně přes abstraktní rozhraní repozitářů (`ports/`); nezávisí na konkrétním databázovém driveru.
+10. **Izolace logování:** Logování přes Pino je soustředěno v infrastruktuře a use cases; doménové entity nesmí volat logger.
+11. **Trojí model dat:** API DTO, Doménová entita a Drizzle tabulkový záznam jsou tři striktně oddělené modely vyžadující explicitní mapování na hranicích vrstev.
+12. **Branded IDs:** Identifikátory entit používají silně typovaná Branded IDs (`UserId`, `BoardId`, `TaskId`), která zabraňují nechtěné záměně parametrů typu `string`.
+13. **Authorized Query Scope:** Veškeré čtecí dotazy musí obsahovat autorizační omezení (`WHERE board_id IN (...)`) přímo v SQL dotazu; filtrování v aplikační paměti je zakázáno.
+14. **Transakční integrita Outboxu:** Uložení změny doménového agregátu a zápis odpovídající události do tabulky `outbox` musí proběhnout v téže atomické PostgreSQL transakci.
+15. **Bezestavovost notifikací:** Notifikační služba doručuje zprávy, ale nesmí přímo ani nepřímo modifikovat stav úkolu ani nástěnky.
+16. **Forenzní nezávislost auditu:** Záznamy v `AuditLog` jsou striktně append-only a přežívají smazání jakékoliv doménové entity (včetně trvalého smazání Tasku či smazání Area).
+17. **Asynchronní hranice událostí:** Doménová událost je zapsána do Outboxu při commitu; její zpracování a doručování notifikací probíhá výhradně asynchronně mimo hlavní HTTP vlákno.
+18. **Zákaz cyklických závislostí:** Mezi moduly v `modules/` nesmí existovat žádná přímá ani nepřímá cyklická závislost (`A -> B -> A`).
+19. **Ochrana interních částí modulu:** Moduly komunikují výhradně přes své veřejné rozhraní (`modules/*/index.ts`); import ze souborů `internal/*` cizího modulu je zakázán.
+20. **Zákaz přímého přístupu UI k DB:** Uživatelské rozhraní (včetně Server Components) nesmí provádět přímé SQL dotazy obcházející aplikační use cases a autorizační scope.
+21. **Ochrana citlivých údajů:** Veškeré tajné klíče a přístupová hesla pocházejí z environment proměnných validovaných Zodem při startu; v repozitáři nesmí být uložen žádný secret.
+22. **Deterministický čas:** Veškerá práce s časem (expirace, OCC razítka, audit) využívá abstrakci `Clock` v UTC; přímé volání `new Date()` v doméně a use cases je zakázáno.
+23. **Explicitní Result/Error Pattern:** Aplikační use cases nevracejí neošetřené výjimky pro očekávané byznys stavy, ale typovaný objekt `Result<T, AppError>`.
+24. **Koordinace úloh na pozadí:** In-process background runner musí používat PostgreSQL advisory zámky (`pg_try_advisory_xact_lock`), aby se vyloučily souběhy při běhu více instancí.
+25. **Závazné procesní pravidlo Gitu:** Antigravity smí vytvářet pouze lokální commity; odeslání změn na vzdálený server (`git push`) provádí výhradně člověk – vlastník projektu.
+
+---
+
+### 35.53 Kontrola souladu se Step 5 až Step 15
+Navržená implementační struktura a bootstrap architektura byly detailně konfrontovány se všemi předchozími architektonickými kroky:
+* **Step 5 & Step 7 (Oprávnění, bezpečnostní hranice, doménové operace):** Moduly `boards`, `membership` a `tasks` obsahují dedikované `Policy` třídy přesně mapující schválené autorizační matice; operace `DELETE_TASK` i převod vlastnictví mají přesné umístění v Use Cases.
+* **Step 6 & Step 8 (Datový model, DB schéma, constrainty, transakce):** Fyzické schéma v `database/schema/` odpovídá návrhu ze Step 8; Drizzle ORM adaptéry v `infrastructure/database/repositories/` garantují zachování transakčních hranic a parciálních unicitních indexů (právě 1 Owner, max 1 Manager).
+* **Step 9 (Autentizace, identity, session):** Better Auth adaptér v `infrastructure/auth/` generuje server-side `ActorContext`, který je striktně oddělen od klientské session cookie a ověřován vůči živému stavu v databázi.
+* **Step 10 (Doménové události, outbox, notifikace):** Struktura `infrastructure/events/` přímo implementuje PostgreSQL Transactional Outbox; události vznikají při commitu doménové transakce a notifikace jsou odděleny v `modules/notifications/`.
+* **Step 11 (Souběžný přístup, OCC, idempotence):** DTO v `modules/tasks/api/dto/` povinně obsahují podporu pro hlavičku `If-Match: "<version>"`; doménová entita `Task` vyhodnocuje číslo verze a Use Case mapuje neshodu na typovaný `ConflictError` (HTTP 409).
+* **Step 12 (Vyhledávání, filtrování, stránkování):** Modul `modules/search/` implementuje `Authorized Query Scope` přímo v SQL dotazech pomocí PostgreSQL FTS a `pg_trgm`.
+* **Step 13 & Step 14 (UI/UX a technické vrstvy monolitu):** Rozdělení na `app/`, `modules/`, `infrastructure/` a `shared/` představuje 100% fyzické naplnění konceptu vrstev z technické architektury Step 14 a respektuje stavové chování UI ze Step 13.
+* **Step 15 (Technologický stack & ADR-001 až ADR-027):** Všechny schválené technologie (Next.js 16, TypeScript Strict, Node 24 LTS, PostgreSQL 18, Drizzle, Better Auth, Zod, Pino, Vitest, Playwright, Docker Compose) mají přesně vymezené své místo v adresářovém stromu bez jakéhokoliv rozporu či vzájemného narušení hranic.
+
+---
+
+## 36. Historie verzí
 
 | Verze | Datum | Popis změny | Schválil / Zaznamenal |
 |---|---|---|---|
@@ -6539,3 +7566,4 @@ Doménový model systému Nástěnka zůstává čistý, technologicky nezávisl
 | **1.1.0** | 19. 9. 2026 | Step 13 – UI/UX architektura, informační architektura, navigace, struktura obrazovek, desktop/mobile chování, role-aware UI, loading/error/empty states, conflict UX a ochrana osobních dat. | Antigravity / Product Owner |
 | **1.2.0** | 19. 9. 2026 | Step 14 – Technická architektura aplikace, vrstvy, závislosti, Application/Domain/Infrastructure hranice, Authentication/Authorization, Repository, transakce, Event/Outbox, Notification, Audit, testovatelnost a technické invarianty. | Antigravity / Product Owner |
 | **1.3.0** | 19. 9. 2026 | Step 15 – Výběr technologického stacku a ADR: frontend, UI strategie, TypeScript, runtime, PostgreSQL, persistence, autentizace, session, authorization, API, validation, migrations, events, notifications, search, deployment, testing, observability a další technická rozhodnutí. | Antigravity / Product Owner |
+| **1.4.0** | 19. 9. 2026 | Step 16 – Implementační struktura projektu a bootstrap architektura: fyzická adresářová struktura monolitu (`app/`, `modules/`, `infrastructure/`, `shared/`, `database/`, `tests/`), hranice modulů a vrstev, pravidla importů, Branded IDs, Result pattern, Outbox worker, sekvence bootstrapu, lifecycle požadavku a 25 implementačních invariantů. | Antigravity / Product Owner |
