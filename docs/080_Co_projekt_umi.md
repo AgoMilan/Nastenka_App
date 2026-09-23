@@ -29,8 +29,10 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - **Board Authorization Policy Engine:** `checkBoardPermission()` vyhodnocuje Board-level oprávnění na základě ActorContext a členství. Implementuje explicitní autorizační matici (ALLOW/DENY s důvody), ADMIN bypass, soft-delete guard a 401 vs 403 rozlišení.
 - **Task & Area Authorization Policy Engine:** `checkTaskPermission()` a `checkAreaPermission()` vyhodnocují oprávnění nad Úkoly a Oblastmi. Podporují rozlišení rolí (OWNER, MANAGER, MEMBER), vztahů k úkolu (Hlavní Řešitel, Spoluřešitel), pravidla pro spoluřešitele (JOIN vyžaduje řešitele, LEAVE pouze sám sebe, REMOVE vyhrazeno pro řešitele a správu) a striktní cross-board ochranu.
 - **Membership Authorization Policy Engine:** `checkMembershipPermission()` vyhodnocuje oprávnění nad správou členství (`MEMBER_ADD`, `MEMBER_REMOVE`, `MEMBER_CHANGE_ROLE`). Zajišťuje strukturální invarianty vlastnictví (jediný OWNER na aktivní Nástěnce nelze odebrat ani sesadit ani ADMINem; ChangeRole na OWNER je zakázána a vyžaduje TransferOwnership), invariant max. 1 Manager na Nástěnku, striktní cross-board ochranu a soft-delete guard.
+- **Board Aplikační vrstva (Use Cases & Ports):** `CreateBoardUseCase` (atomické vytvoření Nástěnky a OWNER členství v transakci), `SoftDeleteBoardUseCase` (logické smazání s autorizací přes BoardPolicy a zachováním členství), `TransferOwnershipUseCase` (atomický převod vlastnictví na stávajícího člena s row locking ochranou proti souběhu a dodržením invariantů: přesně 1 OWNER a max. 1 MANAGER – původní vlastník přechází na roli MANAGER pokud je volná, jinak MEMBER).
+- **Architektura Ports & Adapters a Unit of Work:** Definice portů `BoardRepository`, `MembershipRepository`, `UserRepository`, `UnitOfWork` v `modules/boards/application/ports/` a jejich produkční Drizzle adaptéry v `infrastructure/database/repositories/`. Zajišťuje plnou nezávislost aplikační vrstvy na ORM a deterministické testování transakčního rollbacku.
 - **Server API Authorization Enforcement:** Znovupoužitelná vrstva `enforceAuthorization()` a `executeProtectedOperation()` zaručující princip autoritativního serveru: ověření ActorContextu a oprávnění probíhá VŽDY před spuštěním chráněné operace. Striktní rozlišení 401 Unauthorized (neautentizován/neaktivní) vs 403 Forbidden (nedostatečná práva s kódem důvodu). Zabraňuje UI bypassu.
-- **Hierarchie chyb a Result pattern:** Třídy `AppError`, `AuthenticationError` (401), `AuthorizationError` (403 s kódem důvodu) a typovaný `Result<T, E>` pattern (`ok`, `err`) v `shared/`.
+- **Hierarchie chyb a Result pattern:** Třídy `AppError`, `AuthenticationError` (401), `AuthorizationError` (403 s kódem důvodu), `ValidationError` (400), `NotFoundError` (404), `ConflictError` (409) a typovaný `Result<T, E>` pattern (`ok`, `err`) v `shared/`.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
 - **Databázové migrace:** 2 verzované Drizzle migrace (init schema + Better Auth persistence).
 
@@ -63,7 +65,8 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 ## Omezení
 
 - Login/Register UI není implementováno (pouze auth backend).
-- Aplikační use cases a API endpointy pro správu členství a převod vlastnictví (TransferOwnership) zbývá implementovat v navazujících krocích.
+- Aplikační use cases a API endpointy pro správu členství zbývá implementovat v navazujících krocích (Use Cases pro Nástěnku včetně TransferOwnership jsou dokončeny).
+- Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
 - `npm run test` je v současnosti nefunkční (odkazuje na neinstalovaný Vitest); testy se spouštějí přes `node -C react-server --test tests/unit/*.test.ts`.
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
@@ -73,6 +76,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 23. 9. 2026 | STEP 17.11 – Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership, Ports & Adapters, Unit of Work, 26 testů, 304 celkem) |
 | 23. 9. 2026 | STEP 17.9 – Membership Policy Engine (checkMembershipPermission, strukturální invarianty I1–I4, 46 testů, 278 celkem) |
 | 23. 9. 2026 | STEP 17.8D – Server API Authorization Enforcement, Error hierarchie, Result pattern, 36 testů (232 celkem) |
 | 23. 9. 2026 | STEP 17.8C – Task & Area Authorization Policy Engine (checkTaskPermission, checkAreaPermission, 119 testů, 196 celkem) |

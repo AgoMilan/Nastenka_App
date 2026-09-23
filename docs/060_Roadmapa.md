@@ -23,6 +23,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 17.8C | Task / Area Authorization Policy Engine (checkTaskPermission, checkAreaPermission, 119 testů, 196 celkem) | DONE | 23. 9. 2026 |
 | STEP 17.8D | Server API Authorization Enforcement + testovací matice (36 testů, 232 celkem) | DONE | 23. 9. 2026 |
 | STEP 17.9 | Membership Policy Engine (checkMembershipPermission, 46 testů, 278 celkem) | DONE | 23. 9. 2026 |
+| STEP 17.11 | Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership, 26 testů, 304 celkem) | DONE | 23. 9. 2026 |
 
 ---
 
@@ -40,8 +41,8 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **STEP 17.11** – Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership aplikační vrstva)
-2. Login/Register UI (přihlašovací stránka, registrace)
+1. Login/Register UI (přihlašovací stránka, registrace)
+2. Area & Task Use Cases
 
 ---
 
