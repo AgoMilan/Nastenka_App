@@ -82,9 +82,9 @@ export function checkBoardPermission(
   action: BoardAction,
 ): AuthorizationResult {
   // ── 1. Unauthenticated guard ──────────────────────────────
-  // ActorContext je null → relace neexistuje nebo je neplatná.
+  // ActorContext je null nebo neaktivní → relace neexistuje nebo je neplatná.
   // HTTP 401 – volající musí nejprve provést přihlášení.
-  if (actor === null) {
+  if (actor === null || !actor.is_active) {
     return deny("UNAUTHENTICATED");
   }
 
