@@ -5,6 +5,7 @@ import {
   boolean,
   timestamp,
   pgEnum,
+  text,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -12,6 +13,7 @@ import {
  * POZOR: Role na Nástěnce (OWNER, MANAGER, MEMBER) sem NEPATŘÍ – jsou definovány v Membership!
  */
 export const globalRoleEnum = pgEnum("global_role", ["USER", "ADMIN"]);
+export type GlobalRole = (typeof globalRoleEnum.enumValues)[number];
 
 /**
  * Tabulka uživatelů (User).
@@ -22,6 +24,8 @@ export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull().unique(),
+  emailVerified: boolean("email_verified").default(false).notNull(),
+  image: text("image"),
   globalRole: globalRoleEnum("global_role").default("USER").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })

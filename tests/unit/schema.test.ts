@@ -10,6 +10,9 @@ import {
   auditLogs,
   notifications,
   outbox,
+  sessions,
+  accounts,
+  verifications,
   globalRoleEnum,
   membershipRoleEnum,
   taskStatusEnum,
@@ -23,11 +26,13 @@ import {
   auditLogsRelations,
   notificationsRelations,
   outboxRelations,
+  sessionsRelations,
+  accountsRelations,
 } from "../../database/schema/index.ts";
 import { getTableName, getTableColumns } from "drizzle-orm";
 
-describe("Database Schema Foundation (Complete Domain Model)", () => {
-  test("všech 9 tabulek má správné SQL názvy", () => {
+describe("Database Schema Foundation (Complete Domain & Auth Model)", () => {
+  test("všech 12 tabulek má správné SQL názvy", () => {
     assert.equal(getTableName(users), "users");
     assert.equal(getTableName(boards), "boards");
     assert.equal(getTableName(memberships), "memberships");
@@ -37,6 +42,62 @@ describe("Database Schema Foundation (Complete Domain Model)", () => {
     assert.equal(getTableName(auditLogs), "audit_logs");
     assert.equal(getTableName(notifications), "notifications");
     assert.equal(getTableName(outbox), "outbox");
+    assert.equal(getTableName(sessions), "sessions");
+    assert.equal(getTableName(accounts), "accounts");
+    assert.equal(getTableName(verifications), "verifications");
+  });
+
+  test("tabulka users obsahuje rozšířená pole Better Auth i doménová pole", () => {
+    const cols = getTableColumns(users);
+    assert.ok(cols.id, "id");
+    assert.ok(cols.name, "name");
+    assert.ok(cols.email, "email");
+    assert.ok(cols.emailVerified, "emailVerified");
+    assert.ok(cols.image, "image");
+    assert.ok(cols.globalRole, "globalRole");
+    assert.ok(cols.isActive, "isActive");
+    assert.ok(cols.createdAt, "createdAt");
+    assert.ok(cols.updatedAt, "updatedAt");
+    assert.ok(cols.deletedAt, "deletedAt");
+  });
+
+  test("tabulka sessions obsahuje schválená pole pro Better Auth", () => {
+    const cols = getTableColumns(sessions);
+    assert.ok(cols.id, "id");
+    assert.ok(cols.userId, "userId");
+    assert.ok(cols.token, "token");
+    assert.ok(cols.expiresAt, "expiresAt");
+    assert.ok(cols.ipAddress, "ipAddress");
+    assert.ok(cols.userAgent, "userAgent");
+    assert.ok(cols.createdAt, "createdAt");
+    assert.ok(cols.updatedAt, "updatedAt");
+  });
+
+  test("tabulka accounts obsahuje schválená pole pro Better Auth", () => {
+    const cols = getTableColumns(accounts);
+    assert.ok(cols.id, "id");
+    assert.ok(cols.userId, "userId");
+    assert.ok(cols.accountId, "accountId");
+    assert.ok(cols.providerId, "providerId");
+    assert.ok(cols.accessToken, "accessToken");
+    assert.ok(cols.refreshToken, "refreshToken");
+    assert.ok(cols.idToken, "idToken");
+    assert.ok(cols.accessTokenExpiresAt, "accessTokenExpiresAt");
+    assert.ok(cols.refreshTokenExpiresAt, "refreshTokenExpiresAt");
+    assert.ok(cols.scope, "scope");
+    assert.ok(cols.password, "password");
+    assert.ok(cols.createdAt, "createdAt");
+    assert.ok(cols.updatedAt, "updatedAt");
+  });
+
+  test("tabulka verifications obsahuje schválená pole pro Better Auth", () => {
+    const cols = getTableColumns(verifications);
+    assert.ok(cols.id, "id");
+    assert.ok(cols.identifier, "identifier");
+    assert.ok(cols.value, "value");
+    assert.ok(cols.expiresAt, "expiresAt");
+    assert.ok(cols.createdAt, "createdAt");
+    assert.ok(cols.updatedAt, "updatedAt");
   });
 
   test("globalRoleEnum a membershipRoleEnum jsou striktně odděleny", () => {
@@ -161,5 +222,7 @@ describe("Database Schema Foundation (Complete Domain Model)", () => {
     assert.ok(auditLogsRelations, "auditLogsRelations");
     assert.ok(notificationsRelations, "notificationsRelations");
     assert.ok(outboxRelations, "outboxRelations");
+    assert.ok(sessionsRelations, "sessionsRelations");
+    assert.ok(accountsRelations, "accountsRelations");
   });
 });

@@ -46,6 +46,9 @@ export function createBetterAuthOptions(
     baseURL: env.BETTER_AUTH_URL,
     secret: env.BETTER_AUTH_SECRET,
     database: drizzleAdapter(db, betterAuthDrizzleAdapterConfig),
+    emailAndPassword: {
+      enabled: true,
+    },
     user: {
       additionalFields: serverOwnedUserFields,
     },

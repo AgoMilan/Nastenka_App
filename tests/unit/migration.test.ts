@@ -21,14 +21,15 @@ describe("Database Migration Verification (Drizzle Kit Artefacts)", () => {
     const files = fs.readdirSync(migrationsDir);
     const sqlFiles = files.filter((f) => f.endsWith(".sql"));
     assert.ok(
-      sqlFiles.length >= 1,
-      "musí existovat alespoň jeden .sql soubor migrace",
+      sqlFiles.length >= 2,
+      "musí existovat alespoň dva .sql soubory migrací (0000 a 0001)",
     );
   });
 
-  test("první migrace obsahuje všech 9 tabulek a odpovídající enumy", () => {
+  test("první migrace obsahuje všech 9 původních tabulek a odpovídající enumy", () => {
     const files = fs.readdirSync(migrationsDir);
-    const firstSqlFile = files.find((f) => f.endsWith(".sql"));
+    const sqlFiles = files.filter((f) => f.endsWith(".sql")).sort();
+    const firstSqlFile = sqlFiles[0];
     assert.ok(firstSqlFile, "nalezena první migrace");
 
     const sqlContent = fs.readFileSync(
@@ -70,9 +71,51 @@ describe("Database Migration Verification (Drizzle Kit Artefacts)", () => {
     }
   });
 
+  test("druhá migrace obsahuje Better Auth persistence schéma a rozšíření users", () => {
+    const files = fs.readdirSync(migrationsDir);
+    const sqlFiles = files.filter((f) => f.endsWith(".sql")).sort();
+    const secondSqlFile = sqlFiles[1];
+    assert.ok(secondSqlFile, "nalezena druhá migrace");
+
+    const sqlContent = fs.readFileSync(
+      path.join(migrationsDir, secondSqlFile),
+      "utf-8",
+    );
+
+    assert.ok(
+      sqlContent.includes('CREATE TABLE "accounts"'),
+      'Migrace 0001 musí obsahovat CREATE TABLE "accounts"',
+    );
+    assert.ok(
+      sqlContent.includes('CREATE TABLE "sessions"'),
+      'Migrace 0001 musí obsahovat CREATE TABLE "sessions"',
+    );
+    assert.ok(
+      sqlContent.includes('CREATE TABLE "verifications"'),
+      'Migrace 0001 musí obsahovat CREATE TABLE "verifications"',
+    );
+    assert.ok(
+      sqlContent.includes(
+        'ALTER TABLE "users" ADD COLUMN "email_verified" boolean DEFAULT false NOT NULL',
+      ),
+      "Migrace 0001 musí přidat email_verified do users",
+    );
+    assert.ok(
+      sqlContent.includes('ALTER TABLE "users" ADD COLUMN "image" text'),
+      "Migrace 0001 musí přidat image do users",
+    );
+    assert.ok(
+      sqlContent.includes(
+        'REFERENCES "public"."users"("id") ON DELETE cascade',
+      ),
+      "Migrace 0001 musí obsahovat cascade FK na users.id",
+    );
+  });
+
   test("audit_logs.target_id nemá cizí klíč (FK) na aplikační tabulky", () => {
     const files = fs.readdirSync(migrationsDir);
-    const firstSqlFile = files.find((f) => f.endsWith(".sql"));
+    const sqlFiles = files.filter((f) => f.endsWith(".sql")).sort();
+    const firstSqlFile = sqlFiles[0];
     assert.ok(firstSqlFile);
 
     const sqlContent = fs.readFileSync(
@@ -97,7 +140,8 @@ describe("Database Migration Verification (Drizzle Kit Artefacts)", () => {
 
   test("soft-delete (deleted_at) je přítomen výhradně u users a boards", () => {
     const files = fs.readdirSync(migrationsDir);
-    const firstSqlFile = files.find((f) => f.endsWith(".sql"));
+    const sqlFiles = files.filter((f) => f.endsWith(".sql")).sort();
+    const firstSqlFile = sqlFiles[0];
     assert.ok(firstSqlFile);
 
     const sqlContent = fs.readFileSync(
@@ -134,16 +178,17 @@ describe("Database Migration Verification (Drizzle Kit Artefacts)", () => {
     }
   });
 
-  test("journal metadata obsahuje záznam o první migraci", () => {
+  test("journal metadata obsahuje záznam o první i druhé migraci", () => {
     const journalContent = JSON.parse(fs.readFileSync(journalFile, "utf-8"));
     assert.ok(
       Array.isArray(journalContent.entries),
       "entries musí být pole v journalu",
     );
     assert.ok(
-      journalContent.entries.length >= 1,
-      "journal musí mít alespoň 1 záznam",
+      journalContent.entries.length >= 2,
+      "journal musí mít alespoň 2 záznamy",
     );
     assert.equal(journalContent.entries[0].idx, 0);
+    assert.equal(journalContent.entries[1].idx, 1);
   });
 });

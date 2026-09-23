@@ -7,3 +7,9 @@ export {
   resetAuthForTests,
   serverOwnedUserFields,
 } from "./better-auth.ts";
+
+export {
+  resolveActorContext,
+  type ActorContext,
+  type ResolveActorContextOptions,
+} from "./actor-context.ts";

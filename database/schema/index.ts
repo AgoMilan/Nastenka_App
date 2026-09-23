@@ -1,5 +1,5 @@
 // Enums
-export { globalRoleEnum } from "./users.ts";
+export { globalRoleEnum, type GlobalRole } from "./users.ts";
 export { membershipRoleEnum } from "./memberships.ts";
 export { taskStatusEnum, taskPriorityEnum } from "./tasks.ts";
 
@@ -38,6 +38,24 @@ export {
 
 export { outbox, type OutboxSelect, type OutboxInsert } from "./outbox.ts";
 
+export {
+  sessions,
+  type SessionSelect,
+  type SessionInsert,
+} from "./sessions.ts";
+
+export {
+  accounts,
+  type AccountSelect,
+  type AccountInsert,
+} from "./accounts.ts";
+
+export {
+  verifications,
+  type VerificationSelect,
+  type VerificationInsert,
+} from "./verifications.ts";
+
 // Relační vazby
 export {
   usersRelations,
@@ -49,4 +67,6 @@ export {
   auditLogsRelations,
   notificationsRelations,
   outboxRelations,
+  sessionsRelations,
+  accountsRelations,
 } from "./relations.ts";
