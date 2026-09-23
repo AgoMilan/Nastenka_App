@@ -13,3 +13,14 @@ export {
   type ActorContext,
   type ResolveActorContextOptions,
 } from "./actor-context.ts";
+
+export {
+  enforceAuthorization,
+  executeProtectedOperation,
+  type BoardEnforcementTarget,
+  type TaskEnforcementTarget,
+  type AreaEnforcementTarget,
+  type EnforcementTarget,
+  type EnforcementError,
+  type ExecuteProtectedOperationOptions,
+} from "./enforcement.ts";
