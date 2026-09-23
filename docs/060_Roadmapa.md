@@ -12,7 +12,14 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 
 | ID | Položka | Stav | Datum |
 |---|---|---|---|
-| — | Inicializace projektu | DONE | — |
+| STEP 17.4 | Next.js 16 projekt bootstrap | DONE | 9/2026 |
+| STEP 17.5 | ESLint, Prettier, TypeScript Strict | DONE | 9/2026 |
+| STEP 17.6B1 | Drizzle schema – users, boards, memberships | DONE | 9/2026 |
+| STEP 17.6B2 | Drizzle schema – areas, tasks, task_participants, audit_logs, notifications, outbox | DONE | 9/2026 |
+| STEP 17.6B3 | Drizzle migrace generování + db skripty | DONE | 9/2026 |
+| STEP 17.7A | Better Auth server foundation (lazy init, Drizzle adapter, server-owned fields) | DONE | 23. 9. 2026 |
+| STEP 17.7B | Better Auth persistence schema, Auth Route Handler, ActorContext | DONE | 23. 9. 2026 |
+| STEP 17.8A+B | Board Authorization Policy Engine (checkBoardPermission, 39 testů, 77 celkem) | DONE | 23. 9. 2026 |
 
 ---
 
@@ -30,9 +37,10 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. *Bude doplněno.*
-2. *Bude doplněno.*
-3. *Bude doplněno.*
+1. **STEP 17.9** – Membership Policy Engine (AddMember, RemoveMember, ChangeRole autorizace)
+2. **STEP 17.10** – Task Policy Engine (Task-level autorizace: Hlavní Řešitel, Spoluřešitel)
+3. **STEP 17.11** – Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership aplikační vrstva)
+4. Login/Register UI (přihlašovací stránka, registrace)
 
 ---
 
@@ -40,7 +48,11 @@ Sem patří nejbližší schválené úkoly, které mají následovat.
 
 Sem patří dlouhodobější nápady a plánované směry vývoje, které ještě nejsou aktuálním úkolem.
 
-- *Bude doplněno.*
+- Area Use Cases + Task CRUD
+- Real-time notifikace
+- Full-text search (PostgreSQL tsvector + pg_trgm)
+- E-mailové notifikace
+- Outbox worker (asynchronní zpracování událostí)
 
 ---
 
@@ -48,7 +60,8 @@ Sem patří dlouhodobější nápady a plánované směry vývoje, které ješt�
 
 Sem patří známé technické nedostatky, které nejsou aktuálně prioritou.
 
-- *Bude doplněno.*
+- `npm run test` odkazuje na neinstalovaný Vitest – nutno opravit v package.json (nízká priorita, testy fungují přes `node --test`).
+- `"type": "module"` chybí v package.json – způsobuje Node.js varování při testech (výkon), nízká priorita.
 
 ---
 
