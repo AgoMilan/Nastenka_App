@@ -6,6 +6,9 @@ import type {
 import { DrizzleBoardRepository } from "./drizzle-board-repository.ts";
 import { DrizzleMembershipRepository } from "./drizzle-membership-repository.ts";
 import { DrizzleUserRepository } from "./drizzle-user-repository.ts";
+import { DrizzleAreaRepository } from "./drizzle-area-repository.ts";
+import { DrizzleTaskRepository } from "./drizzle-task-repository.ts";
+import { DrizzleTaskParticipantRepository } from "./drizzle-task-participant-repository.ts";
 
 export class DrizzleUnitOfWork implements UnitOfWork {
   private readonly db: Database;
@@ -23,6 +26,9 @@ export class DrizzleUnitOfWork implements UnitOfWork {
         boards: new DrizzleBoardRepository(txDb),
         memberships: new DrizzleMembershipRepository(txDb),
         users: new DrizzleUserRepository(txDb),
+        areas: new DrizzleAreaRepository(txDb),
+        tasks: new DrizzleTaskRepository(txDb),
+        taskParticipants: new DrizzleTaskParticipantRepository(txDb),
       };
       return await work(repos);
     });
