@@ -25,6 +25,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 17.9 | Membership Policy Engine (checkMembershipPermission, 46 testů, 278 celkem) | DONE | 23. 9. 2026 |
 | STEP 17.11 | Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership, 26 testů, 304 celkem) | DONE | 23. 9. 2026 |
 | STEP 18 | Login / Register UI (přihlašovací a registrační stránka, logout, server guards, 25 testů, 329 celkem) | DONE | 24. 9. 2026 |
+| STEP 19 | Area & Task Use Cases (3 Area + 13 Task Use Cases, Ports & Adapters, 74 testů, 403 celkem) | DONE | 24. 9. 2026 |
 
 ---
 
@@ -42,7 +43,8 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. Area & Task Use Cases
+1. Membership Use Cases (AddMember, RemoveMember, ChangeMemberRole)
+2. Board, Area & Task UI (Server Actions, UI komponenty pro nástěnky, oblasti a úkoly)
 
 ---
 
@@ -50,7 +52,6 @@ Sem patří nejbližší schválené úkoly, které mají následovat.
 
 Sem patří dlouhodobější nápady a plánované směry vývoje, které ještě nejsou aktuálním úkolem.
 
-- Area Use Cases + Task CRUD
 - Real-time notifikace
 - Full-text search (PostgreSQL tsvector + pg_trgm)
 - E-mailové notifikace
