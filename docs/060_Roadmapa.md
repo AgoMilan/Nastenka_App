@@ -27,6 +27,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 18 | Login / Register UI (přihlašovací a registrační stránka, logout, server guards, 25 testů, 329 celkem) | DONE | 24. 9. 2026 |
 | STEP 19 | Area & Task Use Cases (3 Area + 13 Task Use Cases, Ports & Adapters, 74 testů, 403 celkem) | DONE | 24. 9. 2026 |
 | STEP 20 | Membership Use Cases (AddMember, RemoveMember, ChangeMemberRole, 34 testů, 401 celkem) | DONE | 24. 9. 2026 |
+| STEP 21 | LeaveBoardUseCase (dobrovolný odchod člena MEMBER/MANAGER, zákaz pro OWNER bez převodu, task cascade, MEMBER_LEAVE v Policy Engine, 20 nových testů, 426 celkem) | DONE | 24. 9. 2026 |
 
 ---
 
@@ -89,8 +90,8 @@ Krok **STEP 1 – Membership Use Cases** byl úspěšně dokončen a schválen (
 - **TD-06 – Duplicate participant removal** (Priorita: MEDIUM)  
   Při některých scénářích může dojít k duplicitnímu volání `removeParticipant` po `removeAllForTask`. Je potřeba zjednodušit cascade logiku tak, aby stejná vazba nebyla odstraňována vícekrát.
 
-- **TD-07 – MEMBER self-removal / LeaveBoard** (Priorita: MEDIUM / DESIGN DECISION)  
-  Existuje rozpor mezi současnou Policy a architekturou: `050_Architektura.md §10.4` dokumentace předpokládá možnost, aby MEMBER sám opustil Board, zatímco současná Membership Policy administrativní `MEMBER_REMOVE` pro MEMBERa odmítá. Tento rozpor má být vyřešen samostatným návrhem `LeaveBoardUseCase` a nesmí být řešen ad-hoc úpravou současného `RemoveMemberUseCase`.
+- **TD-07 – MEMBER self-removal / LeaveBoard** (STAV: VYŘEŠENO v rámci STEP 21 / STEP 3)  
+  Vyřešeno implementací samostatného use casu `LeaveBoardUseCase` a doplněním doménové akce `MEMBER_LEAVE` do `MembershipPolicy`. Řadový člen (`MEMBER`) a provozní správce (`MANAGER`) mají právo dobrovolně opustit Nástěnku přes `LeaveBoardUseCase` (identita je určena bezpečně ze serverového `ActorContextu`). `RemoveMemberUseCase` zůstává vyhrazen výhradně pro administrativní odebrání člena z pozice `OWNER`/`MANAGER`. Vlastník (`OWNER`) má odchod ze své Nástěnky bez předchozího převodu vlastnictví striktně zakázán (`ConflictError` 409).
 
 ---
 

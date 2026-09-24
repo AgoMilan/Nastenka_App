@@ -30,6 +30,7 @@ import {
   AddMemberUseCase,
   RemoveMemberUseCase,
   ChangeMemberRoleUseCase,
+  LeaveBoardUseCase,
 } from "../../modules/membership/application/use-cases/index.ts";
 import {
   AuthenticationError,
@@ -1129,6 +1130,231 @@ describe("STEP 1 – Membership Use Cases", () => {
       if (res2.success) {
         assert.strictEqual(res2.data.role, "MANAGER");
       }
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────
+  // 4. LeaveBoardUseCase
+  // ───────────────────────────────────────────────────────────
+  describe("4. LeaveBoardUseCase", () => {
+    test("rejects unauthenticated or inactive actor", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const resNull = await useCase.execute(null, { boardId });
+      assert.strictEqual(resNull.success, false);
+      if (!resNull.success) {
+        assert.ok(resNull.error instanceof AuthenticationError);
+      }
+
+      const resInactive = await useCase.execute(inactiveActor, { boardId });
+      assert.strictEqual(resInactive.success, false);
+      if (!resInactive.success) {
+        assert.ok(resInactive.error instanceof AuthenticationError);
+      }
+    });
+
+    test("rejects empty boardId", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const resEmpty = await useCase.execute(memberActor1, { boardId: "   " });
+      assert.strictEqual(resEmpty.success, false);
+      if (!resEmpty.success) {
+        assert.ok(resEmpty.error instanceof ValidationError);
+      }
+    });
+
+    test("rejects non-existent board", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const res404 = await useCase.execute(memberActor1, {
+        boardId: "non-existent-board",
+      });
+      assert.strictEqual(res404.success, false);
+      if (!res404.success) {
+        assert.ok(res404.error instanceof NotFoundError);
+      }
+    });
+
+    test("rejects soft-deleted board", async () => {
+      await boardsRepo.softDelete(boardId, new Date());
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const resDel = await useCase.execute(memberActor1, { boardId });
+      assert.strictEqual(resDel.success, false);
+      if (!resDel.success) {
+        assert.ok(resDel.error instanceof AuthorizationError);
+        assert.strictEqual(resDel.error.reason, "BOARD_DELETED");
+      }
+    });
+
+    test("rejects if actor is not a member of the board", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      // candidateUser is not a member
+      const resCandidate = await useCase.execute(candidateActor, { boardId });
+      assert.strictEqual(resCandidate.success, false);
+      if (!resCandidate.success) {
+        assert.ok(resCandidate.error instanceof NotFoundError);
+      }
+
+      // adminUser is not a member of this board
+      const resAdmin = await useCase.execute(adminActor, { boardId });
+      assert.strictEqual(resAdmin.success, false);
+      if (!resAdmin.success) {
+        assert.ok(resAdmin.error instanceof NotFoundError);
+      }
+    });
+
+    test("OWNER cannot leave board without transferring ownership (ConflictError)", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const res = await useCase.execute(ownerActor, { boardId });
+      assert.strictEqual(res.success, false);
+      if (!res.success) {
+        assert.ok(res.error instanceof ConflictError);
+        assert.strictEqual(res.error.statusCode, 409);
+      }
+
+      // Invariant: OWNER membership remains in repository
+      const ownerMem = await membershipsRepo.findByBoardAndUser(
+        boardId,
+        ownerUser.id,
+      );
+      assert.ok(ownerMem !== null);
+      assert.strictEqual(ownerMem.role, "OWNER");
+    });
+
+    test("ADMIN in role OWNER also cannot leave without transferring ownership", async () => {
+      // Create separate board where admin is OWNER
+      const adminBoard = await boardsRepo.create({
+        name: "Admin Board",
+        createdBy: adminUser.id,
+      });
+      await membershipsRepo.create({
+        boardId: adminBoard.id,
+        userId: adminUser.id,
+        role: "OWNER",
+      });
+
+      const useCase = new LeaveBoardUseCase(uow);
+      const res = await useCase.execute(adminActor, { boardId: adminBoard.id });
+
+      assert.strictEqual(res.success, false);
+      if (!res.success) {
+        assert.ok(res.error instanceof ConflictError);
+      }
+
+      const mem = await membershipsRepo.findByBoardAndUser(
+        adminBoard.id,
+        adminUser.id,
+      );
+      assert.ok(mem !== null && mem.role === "OWNER");
+    });
+
+    test("MEMBER can leave board successfully", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const res = await useCase.execute(memberActor1, { boardId });
+      assert.strictEqual(res.success, true);
+      if (res.success) {
+        assert.strictEqual(res.data.boardId, boardId);
+        assert.strictEqual(res.data.userId, memberUser1.id);
+      }
+
+      const inRepo = await membershipsRepo.findByBoardAndUser(
+        boardId,
+        memberUser1.id,
+      );
+      assert.strictEqual(inRepo, null);
+    });
+
+    test("MANAGER can leave board successfully", async () => {
+      const useCase = new LeaveBoardUseCase(uow);
+
+      const res = await useCase.execute(managerActor, { boardId });
+      assert.strictEqual(res.success, true);
+      if (res.success) {
+        assert.strictEqual(res.data.boardId, boardId);
+        assert.strictEqual(res.data.userId, managerUser.id);
+      }
+
+      const inRepo = await membershipsRepo.findByBoardAndUser(
+        boardId,
+        managerUser.id,
+      );
+      assert.strictEqual(inRepo, null);
+    });
+
+    test("ADMIN with MEMBER role on board can leave successfully", async () => {
+      // Give admin a MEMBER role on boardId
+      await membershipsRepo.create({
+        boardId,
+        userId: adminUser.id,
+        role: "MEMBER",
+      });
+
+      const useCase = new LeaveBoardUseCase(uow);
+      const res = await useCase.execute(adminActor, { boardId });
+
+      assert.strictEqual(res.success, true);
+      const inRepo = await membershipsRepo.findByBoardAndUser(
+        boardId,
+        adminUser.id,
+      );
+      assert.strictEqual(inRepo, null);
+    });
+
+    test("cascade: unassigns leaving member and clears participants", async () => {
+      // Create a task where memberUser1 is assignee and managerUser is participant
+      const task = await tasksRepo.create({
+        boardId,
+        title: "Úkol člena na odchodu",
+        createdBy: ownerUser.id,
+        assigneeId: memberUser1.id,
+      });
+      await participantsRepo.addParticipant(task.id, managerUser.id);
+      await participantsRepo.addParticipant(task.id, memberUser1.id);
+
+      const useCase = new LeaveBoardUseCase(uow);
+      const res = await useCase.execute(memberActor1, { boardId });
+
+      assert.strictEqual(res.success, true);
+
+      // Task assignee is now null
+      const updatedTask = await tasksRepo.findById(task.id);
+      assert.ok(updatedTask !== null);
+      assert.strictEqual(updatedTask.assigneeId, null);
+
+      // Task has no assignee, so all participants are removed
+      const participants = await participantsRepo.findByTaskId(task.id);
+      assert.strictEqual(participants.length, 0);
+    });
+
+    test("cascade: leaving member who was only participant is removed while task assignee remains", async () => {
+      // Create a task where ownerUser is assignee and memberUser1 is participant
+      const task = await tasksRepo.create({
+        boardId,
+        title: "Týmový úkol",
+        createdBy: ownerUser.id,
+        assigneeId: ownerUser.id,
+      });
+      await participantsRepo.addParticipant(task.id, memberUser1.id);
+      await participantsRepo.addParticipant(task.id, managerUser.id);
+
+      const useCase = new LeaveBoardUseCase(uow);
+      const res = await useCase.execute(memberActor1, { boardId });
+
+      assert.strictEqual(res.success, true);
+
+      // Task assignee remains ownerUser
+      const updatedTask = await tasksRepo.findById(task.id);
+      assert.ok(updatedTask !== null);
+      assert.strictEqual(updatedTask.assigneeId, ownerUser.id);
+
+      // memberUser1 is removed from participants, managerUser remains
+      const participants = await participantsRepo.findByTaskId(task.id);
+      assert.strictEqual(participants.length, 1);
+      assert.strictEqual(participants[0].userId, managerUser.id);
     });
   });
 });

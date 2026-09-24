@@ -741,4 +741,154 @@ describe("MembershipPolicy – checkMembershipPermission", () => {
       });
     });
   });
+
+  // ── 11. MEMBER_LEAVE – Dobrovolný odchod člena ──────────────
+  describe("11. MEMBER_LEAVE – Dobrovolný odchod člena", () => {
+    test("MEMBER smí dobrovolně opustit Nástěnku → ALLOW", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: false,
+        targetUserId: userActor.actor_user_id,
+        targetRole: "MEMBER",
+      };
+      const result = checkMembershipPermission(
+        userActor,
+        boardId,
+        memberMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, true);
+    });
+
+    test("MANAGER smí dobrovolně opustit Nástěnku → ALLOW", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: false,
+        targetUserId: userActor.actor_user_id,
+        targetRole: "MANAGER",
+      };
+      const result = checkMembershipPermission(
+        userActor,
+        boardId,
+        managerMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, true);
+    });
+
+    test("OWNER nesmí opustit Nástěnku bez převodu vlastnictví → DENY(CANNOT_REMOVE_SOLE_OWNER)", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: false,
+        targetUserId: userActor.actor_user_id,
+        targetRole: "OWNER",
+        isSoleOwner: true,
+      };
+      const result = checkMembershipPermission(
+        userActor,
+        boardId,
+        ownerMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(
+        !result.allowed && result.reason === "CANNOT_REMOVE_SOLE_OWNER",
+      );
+    });
+
+    test("ADMIN v roli OWNER také nesmí opustit Nástěnku → DENY(CANNOT_REMOVE_SOLE_OWNER)", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: false,
+        targetUserId: adminActor.actor_user_id,
+        targetRole: "OWNER",
+        isSoleOwner: true,
+      };
+      const result = checkMembershipPermission(
+        adminActor,
+        boardId,
+        ownerMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(
+        !result.allowed && result.reason === "CANNOT_REMOVE_SOLE_OWNER",
+      );
+    });
+
+    test("ADMIN v roli MEMBER smí opustit Nástěnku → ALLOW", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: false,
+        targetUserId: adminActor.actor_user_id,
+        targetRole: "MEMBER",
+      };
+      const result = checkMembershipPermission(
+        adminActor,
+        boardId,
+        memberMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, true);
+    });
+
+    test("nečlen nemůže opustit Nástěnku → DENY(NOT_A_MEMBER)", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: false,
+        targetUserId: userActor.actor_user_id,
+        targetRole: null,
+      };
+      const result = checkMembershipPermission(
+        userActor,
+        boardId,
+        null,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(!result.allowed && result.reason === "NOT_A_MEMBER");
+    });
+
+    test("odchod ze smazané Nástěnky je zamítnut → DENY(BOARD_DELETED)", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId,
+        isBoardDeleted: true,
+        targetUserId: userActor.actor_user_id,
+        targetRole: "MEMBER",
+      };
+      const result = checkMembershipPermission(
+        userActor,
+        boardId,
+        memberMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(!result.allowed && result.reason === "BOARD_DELETED");
+    });
+
+    test("cross-board odchod je zamítnut → DENY(CROSS_BOARD_ACCESS)", () => {
+      const targetLeave: MembershipAuthorizationTarget = {
+        boardId: otherBoardId,
+        isBoardDeleted: false,
+        targetUserId: userActor.actor_user_id,
+        targetRole: "MEMBER",
+      };
+      const result = checkMembershipPermission(
+        userActor,
+        boardId,
+        memberMembership,
+        targetLeave,
+        "MEMBER_LEAVE",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(!result.allowed && result.reason === "CROSS_BOARD_ACCESS");
+    });
+  });
 });

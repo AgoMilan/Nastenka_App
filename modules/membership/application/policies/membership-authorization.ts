@@ -49,9 +49,10 @@ export type BoardRole = ActorMembership["role"]; // "OWNER" | "MANAGER" | "MEMBE
  * MEMBER_ADD         – Přidat nového člena do Nástěnky
  * MEMBER_REMOVE      – Administrativně odebrat člena z Nástěnky
  * MEMBER_CHANGE_ROLE – Změnit roli existujícího člena na Nástěnce
+ * MEMBER_LEAVE       – Dobrovolný odchod člena z Nástěnky (MEMBER/MANAGER)
  */
 export type MembershipAction =
-  "MEMBER_ADD" | "MEMBER_REMOVE" | "MEMBER_CHANGE_ROLE";
+  "MEMBER_ADD" | "MEMBER_REMOVE" | "MEMBER_CHANGE_ROLE" | "MEMBER_LEAVE";
 
 // ─────────────────────────────────────────────────────────────
 // Membership Deny Reasons a Result

@@ -19,3 +19,9 @@ export {
   type TransferOwnershipInput,
   type TransferOwnershipOutput,
 } from "../../../boards/application/use-cases/transfer-ownership.use-case.ts";
+
+export {
+  LeaveBoardUseCase,
+  type LeaveBoardInput,
+  type LeaveBoardOutput,
+} from "./leave-board.use-case.ts";

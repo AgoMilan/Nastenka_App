@@ -100,9 +100,9 @@ export function checkMembershipPermission(
   // Tyto invarianty platí bez výjimky pro všechny aktory včetně globálního ADMINa.
 
   // I1 & I3: Aktivní Nástěnka musí mít právě jednoho platného Ownera.
-  // Odstranění jediného Ownera je přísně zakázáno.
+  // Odstranění či odchod jediného Ownera je přísně zakázán.
   if (
-    action === "MEMBER_REMOVE" &&
+    (action === "MEMBER_REMOVE" || action === "MEMBER_LEAVE") &&
     (target.targetRole === "OWNER" || target.isSoleOwner === true)
   ) {
     return deny("CANNOT_REMOVE_SOLE_OWNER");
@@ -192,6 +192,18 @@ export function checkMembershipPermission(
     // MEMBER: nesmí měnit role
     case "MEMBER_CHANGE_ROLE": {
       if (role === "OWNER") {
+        return ALLOW;
+      }
+      return deny("INSUFFICIENT_ROLE");
+    }
+
+    // ── MEMBER_LEAVE ────────────────────────────────────────
+    // Dobrovolný odchod ze strany přihlášeného člena (Actor === Target)
+    // OWNER: zakázán v bodu 4 (CANNOT_REMOVE_SOLE_OWNER / Invariant 1)
+    // MANAGER: smí dobrovolně opustit Nástěnku
+    // MEMBER: smí dobrovolně opustit Nástěnku
+    case "MEMBER_LEAVE": {
+      if (role === "MEMBER" || role === "MANAGER") {
         return ALLOW;
       }
       return deny("INSUFFICIENT_ROLE");
