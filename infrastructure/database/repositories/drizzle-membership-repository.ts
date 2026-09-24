@@ -95,4 +95,12 @@ export class DrizzleMembershipRepository implements MembershipRepository {
         and(eq(memberships.boardId, boardId), eq(memberships.userId, userId)),
       );
   }
+
+  async delete(boardId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(memberships)
+      .where(
+        and(eq(memberships.boardId, boardId), eq(memberships.userId, userId)),
+      );
+  }
 }

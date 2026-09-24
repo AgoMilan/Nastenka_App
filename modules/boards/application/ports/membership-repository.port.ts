@@ -36,4 +36,5 @@ export interface MembershipRepository {
     userId: string,
     newRole: BoardRole,
   ): Promise<void>;
+  delete(boardId: string, userId: string): Promise<void>;
 }

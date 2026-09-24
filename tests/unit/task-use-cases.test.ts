@@ -210,6 +210,15 @@ class InMemoryMembershipRepository implements MembershipRepository {
       }
     }
   }
+
+  async delete(boardId: string, userId: string): Promise<void> {
+    for (const [id, r] of this.store.entries()) {
+      if (r.boardId === boardId && r.userId === userId) {
+        this.store.delete(id);
+        return;
+      }
+    }
+  }
 }
 
 class InMemoryUserRepository implements UserRepository {

@@ -160,6 +160,15 @@ class InMemoryMembershipRepository implements MembershipRepository {
     }
   }
 
+  async delete(boardId: string, userId: string): Promise<void> {
+    for (const [id, r] of this.store.entries()) {
+      if (r.boardId === boardId && r.userId === userId) {
+        this.store.delete(id);
+        return;
+      }
+    }
+  }
+
   clone(): Map<string, MembershipRecord> {
     return new Map(
       Array.from(this.store.entries()).map(([k, v]) => [k, { ...v }]),
