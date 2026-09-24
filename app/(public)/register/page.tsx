@@ -1,19 +1,15 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { resolveActorContext } from "@/infrastructure/auth/index.ts";
+import { RegisterForm } from "@/components/auth/register-form.tsx";
 
-/**
- * Kořenové přesměrování aplikace dle kapitoly 35.2 docs/050_Architektura.md.
- * Pokud je uživatel přihlášen a aktivní, přesměruje na /app.
- * Jinak přesměruje na /login.
- */
-export default async function HomePage() {
+export default async function RegisterPage() {
   const headersList = await headers();
   const actor = await resolveActorContext(headersList);
 
   if (actor) {
     redirect("/app");
-  } else {
-    redirect("/login");
   }
+
+  return <RegisterForm />;
 }
