@@ -34,6 +34,10 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Area Use Cases:** `CreateAreaUseCase` (ověření unikátnosti názvu v rámci Nástěnky, soft-delete guard), `UpdateAreaUseCase` (validace a unikátnost nového názvu), `DeleteAreaUseCase` (kontrolované smazání vyžadující přesné textové potvrzení `"SMAZAT"` a kaskádové odstranění navázaných úkolů).
   - **Task Use Cases (13 use cases):** `CreateTaskUseCase` (výchozí stavy, cross-board validace oblasti a řešitele), `UpdateTaskUseCase` (samostatná oprávnění pro název a popis), `ChangeTaskAssigneeUseCase` (cross-board ověření, automatické vyčištění spoluřešitelů při zrušení řešitele), `TakeOverTaskUseCase` (převzetí úkolu členem s odebráním ze spoluřešitelů), `JoinTaskAsParticipantUseCase` (invariant: vyžaduje existujícího řešitele, zákaz připojení řešitele k sobě samému, kontrola duplicity), `LeaveTaskAsParticipantUseCase` (odpojení výhradně sama sebe), `RemoveTaskParticipantUseCase` (oprávnění řešitele, správce a vlastníka k odebrání spoluřešitele), `ChangeTaskStatusUseCase` (automatické nastavení/resetování `completedAt` při přechodu do/z `"HOTOVO"`), `ChangeTaskAreaUseCase` (striktní cross-board guard), `ChangeTaskDueDateUseCase` (validace a nastavení/zrušení termínu), `ChangeTaskPriorityUseCase` (validace enum hodnot `"BĚŽNÁ"` / `"SPĚCHÁ"`), `ArchiveTaskUseCase` (přechod do stavu `"ARCHIVOVÁNO"`), `DeleteTaskUseCase` (kontrolovaný hard-delete vyžadující potvrzení `"SMAZAT"` a kaskádové odstranění vazeb).
   - **Porty & Drizzle adaptéry:** `AreaRepository`, `TaskRepository`, `TaskParticipantRepository` a jejich registrace do transakčního `UnitOfWork` s row-level lockingem (`findByIdForUpdate`).
+- **Membership Aplikační vrstva (Use Cases):** Kompletní orchestrace správy členství na Nástěnkách:
+  - `AddMemberUseCase`: přidání existujícího aktivního uživatele do Nástěnky, zamezení duplicitního členství, ověření limitu manažerů (max. 1), autorizace přes `MembershipPolicy` (`MEMBER_ADD`).
+  - `RemoveMemberUseCase`: administrativní odebrání člena z Nástěnky, striktní ochrana sole OWNERa (`CANNOT_REMOVE_SOLE_OWNER`), kaskádové uvolnění úkolů odebraného řešitele (`assigneeId = null`), vyčištění vazeb spoluřešitelů a autorizace přes `MembershipPolicy` (`MEMBER_REMOVE`).
+  - `ChangeMemberRoleUseCase`: změna role existujícího člena mezi `MEMBER` a `MANAGER`, ochrana struktury vlastnictví (zákaz povýšení na OWNER a sesazení sole OWNERa), ochrana limitu manažerů (`MANAGER_LIMIT_EXCEEDED`), idempotence a autorizace přes `MembershipPolicy` (`MEMBER_CHANGE_ROLE`).
 - **Architektura Ports & Adapters a Unit of Work:** Definice portů `BoardRepository`, `MembershipRepository`, `UserRepository`, `AreaRepository`, `TaskRepository`, `TaskParticipantRepository`, `UnitOfWork` v aplikačních vrstvách modulů a jejich produkční Drizzle adaptéry v `infrastructure/database/repositories/`. Zajišťuje plnou nezávislost aplikační vrstvy na ORM a deterministické testování transakčního rollbacku.
 - **Server API Authorization Enforcement:** Znovupoužitelná vrstva `enforceAuthorization()` a `executeProtectedOperation()` zaručující princip autoritativního serveru: ověření ActorContextu a oprávnění probíhá VŽDY před spuštěním chráněné operace. Striktní rozlišení 401 Unauthorized (neautentizován/neaktivní) vs 403 Forbidden (nedostatečná práva s kódem důvodu). Zabraňuje UI bypassu.
 - **Hierarchie chyb a Result pattern:** Třídy `AppError`, `AuthenticationError` (401), `AuthorizationError` (403 s kódem důvodu), `ValidationError` (400), `NotFoundError` (404), `ConflictError` (409) a typovaný `Result<T, E>` pattern (`ok`, `err`) v `shared/`.
@@ -69,7 +73,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases a API endpointy pro správu členství zbývá implementovat v navazujících krocích (Use Cases pro Nástěnku včetně TransferOwnership jsou dokončeny).
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro jejich obsluhu zbývá implementovat v navazujících krocích.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
 - `npm run test` je v současnosti nefunkční (odkazuje na neinstalovaný Vitest); testy se spouštějí přes `node -C react-server --test tests/unit/*.test.ts`.
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
@@ -80,6 +84,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 24. 9. 2026 | STEP 20 (Membership Use Cases) – AddMember, RemoveMember, ChangeMemberRole (Drizzle repository delete, kaskáda úkolů, 34 testů, 401 celkem) |
 | 24. 9. 2026 | STEP 19 – Area & Task Use Cases (3 Area + 13 Task Use Cases, Drizzle repositories, UnitOfWork integrace, 74 testů, 403 celkem) |
 | 24. 9. 2026 | STEP 18 – Login / Register UI (Login, Register, Logout, Server Route Guards, ActorContext integrace, Zod validace, 25 testů, 329 celkem) |
 | 23. 9. 2026 | STEP 17.11 – Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership, Ports & Adapters, Unit of Work, 26 testů, 304 celkem) |

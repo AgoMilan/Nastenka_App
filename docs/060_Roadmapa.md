@@ -26,6 +26,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 17.11 | Board Use Cases (CreateBoard, SoftDeleteBoard, TransferOwnership, 26 testů, 304 celkem) | DONE | 23. 9. 2026 |
 | STEP 18 | Login / Register UI (přihlašovací a registrační stránka, logout, server guards, 25 testů, 329 celkem) | DONE | 24. 9. 2026 |
 | STEP 19 | Area & Task Use Cases (3 Area + 13 Task Use Cases, Ports & Adapters, 74 testů, 403 celkem) | DONE | 24. 9. 2026 |
+| STEP 20 | Membership Use Cases (AddMember, RemoveMember, ChangeMemberRole, 34 testů, 401 celkem) | DONE | 24. 9. 2026 |
 
 ---
 
@@ -43,8 +44,8 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. Membership Use Cases (AddMember, RemoveMember, ChangeMemberRole)
-2. Board, Area & Task UI (Server Actions, UI komponenty pro nástěnky, oblasti a úkoly)
+1. Board, Area & Task UI (Server Actions, UI komponenty pro nástěnky, oblasti a úkoly)
+2. Membership UI (přidávání/odebírání členů, správa rolí)
 
 ---
 
