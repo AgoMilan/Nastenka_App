@@ -857,6 +857,136 @@ describe("Board Use Cases (STEP 17.11)", () => {
       }
     });
 
+    test("zamítne neautentizovaného nebo neaktivního aktéra", async () => {
+      const useCase = new TransferOwnershipUseCase(uow);
+      const resNull = await useCase.execute(null, {
+        boardId,
+        targetUserId: "user-2",
+      });
+      assert.equal(resNull.success, false);
+      if (!resNull.success) {
+        assert.ok(resNull.error instanceof AuthenticationError);
+      }
+
+      const inactiveActor: ActorContext = {
+        actor_user_id: "inactive-user",
+        global_role: "USER",
+        session_id: "inactive-sess",
+        is_active: false,
+      };
+      const resInactive = await useCase.execute(inactiveActor, {
+        boardId,
+        targetUserId: "user-2",
+      });
+      assert.equal(resInactive.success, false);
+      if (!resInactive.success) {
+        assert.ok(resInactive.error instanceof AuthenticationError);
+      }
+    });
+
+    test("zamítne prázdné ID Nástěnky nebo cílového uživatele", async () => {
+      const useCase = new TransferOwnershipUseCase(uow);
+      const resEmptyBoard = await useCase.execute(actorUser, {
+        boardId: "   ",
+        targetUserId: "user-2",
+      });
+      assert.equal(resEmptyBoard.success, false);
+      if (!resEmptyBoard.success) {
+        assert.ok(resEmptyBoard.error instanceof ValidationError);
+      }
+
+      const resEmptyUser = await useCase.execute(actorUser, {
+        boardId,
+        targetUserId: "",
+      });
+      assert.equal(resEmptyUser.success, false);
+      if (!resEmptyUser.success) {
+        assert.ok(resEmptyUser.error instanceof ValidationError);
+      }
+    });
+
+    test("zamítne převod na neexistující Nástěnce", async () => {
+      const useCase = new TransferOwnershipUseCase(uow);
+      const res = await useCase.execute(actorUser, {
+        boardId: "non-existent-board",
+        targetUserId: "user-2",
+      });
+      assert.equal(res.success, false);
+      if (!res.success) {
+        assert.ok(res.error instanceof NotFoundError);
+      }
+    });
+
+    test("zamítne převod pokud cílový uživatel neexistuje v users repozitáři", async () => {
+      await membershipRepo.create({ boardId, userId: "user-1", role: "OWNER" });
+      await membershipRepo.create({
+        boardId,
+        userId: "ghost-user",
+        role: "MEMBER",
+      });
+
+      const useCase = new TransferOwnershipUseCase(uow);
+      const res = await useCase.execute(actorUser, {
+        boardId,
+        targetUserId: "ghost-user",
+      });
+      assert.equal(res.success, false);
+      if (!res.success) {
+        assert.ok(res.error instanceof ValidationError);
+      }
+    });
+
+    test("zamítne převod pokud cílový uživatel není aktivní nebo je soft-deleted", async () => {
+      userRepo.store.set("inactive-target", {
+        id: "inactive-target",
+        name: "Inactive Target",
+        email: "inactive@test.local",
+        globalRole: "USER",
+        isActive: false,
+        deletedAt: null,
+      });
+      userRepo.store.set("deleted-target", {
+        id: "deleted-target",
+        name: "Deleted Target",
+        email: "deleted@test.local",
+        globalRole: "USER",
+        isActive: true,
+        deletedAt: new Date(),
+      });
+
+      await membershipRepo.create({ boardId, userId: "user-1", role: "OWNER" });
+      await membershipRepo.create({
+        boardId,
+        userId: "inactive-target",
+        role: "MEMBER",
+      });
+      await membershipRepo.create({
+        boardId,
+        userId: "deleted-target",
+        role: "MEMBER",
+      });
+
+      const useCase = new TransferOwnershipUseCase(uow);
+
+      const resInactive = await useCase.execute(actorUser, {
+        boardId,
+        targetUserId: "inactive-target",
+      });
+      assert.equal(resInactive.success, false);
+      if (!resInactive.success) {
+        assert.ok(resInactive.error instanceof ValidationError);
+      }
+
+      const resDeleted = await useCase.execute(actorUser, {
+        boardId,
+        targetUserId: "deleted-target",
+      });
+      assert.equal(resDeleted.success, false);
+      if (!resDeleted.success) {
+        assert.ok(resDeleted.error instanceof ValidationError);
+      }
+    });
+
     test("Atomicity & Rollback: selhání při aktualizaci nového Ownera vrátí celou operaci zpět", async () => {
       await membershipRepo.create({ boardId, userId: "user-1", role: "OWNER" });
       await membershipRepo.create({

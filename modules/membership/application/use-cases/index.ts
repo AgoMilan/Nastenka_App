@@ -13,3 +13,9 @@ export {
   ChangeMemberRoleUseCase,
   type ChangeMemberRoleInput,
 } from "./change-member-role.use-case.ts";
+
+export {
+  TransferOwnershipUseCase,
+  type TransferOwnershipInput,
+  type TransferOwnershipOutput,
+} from "../../../boards/application/use-cases/transfer-ownership.use-case.ts";

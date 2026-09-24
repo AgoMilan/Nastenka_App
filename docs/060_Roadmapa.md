@@ -62,10 +62,35 @@ Sem patří dlouhodobější nápady a plánované směry vývoje, které ješt�
 
 # TECHNICKÝ DLUH
 
-Sem patří známé technické nedostatky, které nejsou aktuálně prioritou.
+Sem patří známé technické nedostatky a následná technická zjištění (Follow-up items), které nejsou bezprostředním blokátorem dokončených kroků.
 
+## Běžný technický dluh
 - `npm run test` odkazuje na neinstalovaný Vitest – nutno opravit v package.json (nízká priorita, testy fungují přes `node --test`).
 - `"type": "module"` chybí v package.json – způsobuje Node.js varování při testech (výkon), nízká priorita.
+
+## STEP 1 Code Review – Follow-up & Technical Debt (Membership Use Cases)
+Krok **STEP 1 – Membership Use Cases** byl úspěšně dokončen a schválen (`READY FOR ACCEPTANCE: YES / COMPLETED`). Následující položky vzešly z architektonické a bezpečnostní prověrky (Code Review) jako technický dluh a náměty pro navazující refaktoring a designová rozhodnutí:
+
+- **TD-01 – Sole Owner detection** (Priorita: HIGH)  
+  Současný `RemoveMemberUseCase` používá `targetMembership.role === "OWNER"` jako indikátor sole Ownera. V konzistentním DB stavu je chování správné, ale označení `isSoleOwner` je zavádějící a implementace je křehká vůči případné nekonzistenci mezi Board a Membership daty.
+
+- **TD-02 – Soft-deleted Board error semantics** (Priorita: MEDIUM)  
+  Při práci se soft-deleted Boardem může být vrácen `AuthorizationError (403)` místo `NotFoundError (404)`. Je potřeba zvážit sjednocení chování tak, aby nebyla zbytečně odhalována existence Boardu.
+
+- **TD-03 – Inactive target user error semantics** (Priorita: MEDIUM)  
+  Neaktivní cílový uživatel je nyní odmítnut jako `ValidationError`. Je potřeba zvážit přesnější aplikační/domain error semantics.
+
+- **TD-04 – Task cascade fallback** (Priorita: MEDIUM)  
+  `RemoveMemberUseCase` obsahuje task cascade, která může tiše přeskočit část operace, pokud `tasks` nejsou dostupné v `UnitOfWork`. Je potřeba prověřit, zda má být takový stav explicitně odmítnut, nebo zda má být cascade povinnou součástí transakční operace.
+
+- **TD-05 – Task cascade performance** (Priorita: MEDIUM)  
+  Task cascade používá individuální DB operace v cyklu a může vést k N+M počtu databázových volání. Budoucí optimalizace by měla zvážit dávkové operace.
+
+- **TD-06 – Duplicate participant removal** (Priorita: MEDIUM)  
+  Při některých scénářích může dojít k duplicitnímu volání `removeParticipant` po `removeAllForTask`. Je potřeba zjednodušit cascade logiku tak, aby stejná vazba nebyla odstraňována vícekrát.
+
+- **TD-07 – MEMBER self-removal / LeaveBoard** (Priorita: MEDIUM / DESIGN DECISION)  
+  Existuje rozpor mezi současnou Policy a architekturou: `050_Architektura.md §10.4` dokumentace předpokládá možnost, aby MEMBER sám opustil Board, zatímco současná Membership Policy administrativní `MEMBER_REMOVE` pro MEMBERa odmítá. Tento rozpor má být vyřešen samostatným návrhem `LeaveBoardUseCase` a nesmí být řešen ad-hoc úpravou současného `RemoveMemberUseCase`.
 
 ---
 
