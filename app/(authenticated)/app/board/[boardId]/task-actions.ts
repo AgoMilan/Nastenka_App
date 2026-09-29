@@ -13,11 +13,25 @@ import {
   ChangeTaskAreaUseCase,
   ChangeTaskDueDateUseCase,
   ChangeTaskPriorityUseCase,
+  ChangeTaskStatusUseCase,
+  TakeOverTaskUseCase,
+  JoinTaskAsParticipantUseCase,
+  LeaveTaskAsParticipantUseCase,
+  RemoveTaskParticipantUseCase,
+  ArchiveTaskUseCase,
+  DeleteTaskUseCase,
 } from "@/modules/tasks/application/use-cases/index.ts";
 import {
   createTaskSchema,
   editTaskSchema,
   changeTaskAssigneeSchema,
+  changeTaskStatusSchema,
+  takeOverTaskSchema,
+  joinTaskAsParticipantSchema,
+  leaveTaskAsParticipantSchema,
+  removeTaskParticipantSchema,
+  archiveTaskSchema,
+  deleteTaskSchema,
 } from "@/modules/tasks/api/dto/task.dto.ts";
 
 export interface TaskActionState {
@@ -393,6 +407,566 @@ export async function changeTaskAssigneeAction(
     revalidatePath(`/app/board/${boardId}`);
   }
 
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro změnu stavu úkolu (ChangeTaskStatus).
+ */
+export async function changeTaskStatusAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+  const rawStatus = formData.get("status");
+
+  const parsed = changeTaskStatusSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+    status: typeof rawStatus === "string" ? rawStatus : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný stav úkolu.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new ChangeTaskStatusUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+    newStatus: parsed.data.status,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro převzetí úkolu na sebe (TakeOverTask).
+ */
+export async function takeOverTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+
+  const parsed = takeOverTaskSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný identifikátor úkolu.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new TakeOverTaskUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro dobrovolné připojení k úkolu jako spoluřešitel (JoinTaskAsParticipant).
+ */
+export async function joinTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+
+  const parsed = joinTaskAsParticipantSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný identifikátor úkolu.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new JoinTaskAsParticipantUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro odpojení se z úkolu jako spoluřešitel (LeaveTaskAsParticipant).
+ */
+export async function leaveTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+
+  const parsed = leaveTaskAsParticipantSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný identifikátor úkolu.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new LeaveTaskAsParticipantUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro nucené odebrání spoluřešitele z úkolu (RemoveTaskParticipant).
+ */
+export async function removeTaskParticipantAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+  const rawParticipantUserId = formData.get("participantUserId");
+
+  const parsed = removeTaskParticipantSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+    participantUserId:
+      typeof rawParticipantUserId === "string" ? rawParticipantUserId : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error:
+        parsed.error.issues[0]?.message ??
+        "Neplatný identifikátor spoluřešitele.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new RemoveTaskParticipantUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+    targetUserId: parsed.data.participantUserId,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro archivaci úkolu (ArchiveTask).
+ */
+export async function archiveTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+
+  const parsed = archiveTaskSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný identifikátor úkolu.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new ArchiveTaskUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro řízené trvalé smazání úkolu (DeleteTask).
+ */
+export async function deleteTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+  const rawConfirmation = formData.get("confirmation");
+
+  const parsed = deleteTaskSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+    confirmation: typeof rawConfirmation === "string" ? rawConfirmation : "",
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error:
+        parsed.error.issues[0]?.message ??
+        "Pro smazání úkolu je vyžadováno přesné potvrzení textem 'SMAZAT'.",
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (!boardId) {
+    return {
+      success: false,
+      error: "ID Nástěnky je povinné.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new DeleteTaskUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    taskId: parsed.data.taskId,
+    confirmation: parsed.data.confirmation,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${boardId}`);
   return {
     success: true,
     taskId: parsed.data.taskId,
