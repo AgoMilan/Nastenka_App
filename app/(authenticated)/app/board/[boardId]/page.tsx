@@ -6,9 +6,17 @@ import { getDb } from "@/infrastructure/database/index.ts";
 import { DrizzleBoardRepository } from "@/infrastructure/database/repositories/drizzle-board-repository.ts";
 import { DrizzleMembershipRepository } from "@/infrastructure/database/repositories/drizzle-membership-repository.ts";
 import { DrizzleAreaRepository } from "@/infrastructure/database/repositories/drizzle-area-repository.ts";
+import { DrizzleTaskRepository } from "@/infrastructure/database/repositories/drizzle-task-repository.ts";
+import { DrizzleTaskParticipantRepository } from "@/infrastructure/database/repositories/drizzle-task-participant-repository.ts";
+import { DrizzleUserRepository } from "@/infrastructure/database/repositories/drizzle-user-repository.ts";
 import { GetBoardDetailUseCase } from "@/modules/boards/application/use-cases/get-board-detail.use-case.ts";
 import { GetUserBoardsUseCase } from "@/modules/boards/application/use-cases/get-user-boards.use-case.ts";
 import { GetBoardAreasUseCase } from "@/modules/areas/application/use-cases/get-board-areas.use-case.ts";
+import {
+  GetBoardTasksUseCase,
+  type TaskFilterMode,
+} from "@/modules/tasks/application/use-cases/get-board-tasks.use-case.ts";
+import { GetBoardMembersUseCase } from "@/modules/boards/application/use-cases/get-board-members.use-case.ts";
 import { RoleBadge } from "@/components/boards/role-badge.tsx";
 import { BoardSwitcher } from "@/components/boards/board-switcher.tsx";
 import { LogoutButton } from "@/components/auth/logout-button.tsx";
@@ -18,21 +26,34 @@ interface BoardPageProps {
   params: Promise<{
     boardId: string;
   }>;
+  searchParams?: Promise<{
+    filter?: string;
+  }>;
 }
 
 /**
  * Stránka detailu Nástěnky: /app/board/[boardId]
  *
- * Invarianty:
+ * Invarianty (STEP 3):
  * 1. Autoritativní přístup: Ověřuje existenci, aktivní stav (deleted_at IS NULL)
  *    a členství/admin práva. Při neúspěchu volá notFound().
  * 2. Zobrazuje: Název nástěnky, české označení role přihlášeného uživatele,
  *    navigaci zpět na „Moje nástěnky“ a Board Switcher pro přepínání.
  * 3. Zobrazuje Oblasti nástěnky přes GetBoardAreasUseCase a AreaSection.
- * 4. Umožňuje oprávněným rolím (OWNER, MANAGER, ADMIN) vytvářet, upravovat a mazat oblasti.
+ * 4. Zobrazuje Úkoly nástěnky přes GetBoardTasksUseCase propojené s oblastmi.
+ * 5. Umožňuje oprávněným rolím vytvářet oblasti (OWNER, MANAGER, ADMIN)
+ *    a vytvářet úkoly (OWNER, MANAGER, MEMBER, ADMIN).
  */
-export default async function BoardPage({ params }: BoardPageProps) {
+export default async function BoardPage({ params, searchParams }: BoardPageProps) {
   const { boardId } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const rawFilter = resolvedSearchParams?.filter;
+  const filterMode: TaskFilterMode =
+    rawFilter === "ARCHIVED"
+      ? "ARCHIVED"
+      : rawFilter === "ALL"
+        ? "ALL"
+        : "ACTIVE";
 
   const headersList = await headers();
   const actor = await resolveActorContext(headersList);
@@ -45,6 +66,9 @@ export default async function BoardPage({ params }: BoardPageProps) {
   const boardRepo = new DrizzleBoardRepository(db);
   const membershipRepo = new DrizzleMembershipRepository(db);
   const areaRepo = new DrizzleAreaRepository(db);
+  const taskRepo = new DrizzleTaskRepository(db);
+  const taskParticipantRepo = new DrizzleTaskParticipantRepository(db);
+  const userRepo = new DrizzleUserRepository(db);
 
   const getBoardDetailUseCase = new GetBoardDetailUseCase(
     boardRepo,
@@ -52,7 +76,7 @@ export default async function BoardPage({ params }: BoardPageProps) {
   );
   const boardDetailResult = await getBoardDetailUseCase.execute(actor, boardId);
 
-  // Bezpečnostní pravidlo §13 a §14: Neexistující, soft-deleted nebo neautorizovaná nástěnka -> notFound()
+  // Bezpečnostní pravidlo: Neexistující, soft-deleted nebo neautorizovaná nástěnka -> notFound()
   if (!boardDetailResult.success) {
     notFound();
   }
@@ -70,6 +94,33 @@ export default async function BoardPage({ params }: BoardPageProps) {
 
   const canManageAreas =
     actor.global_role === "ADMIN" || role === "OWNER" || role === "MANAGER";
+
+  // Načtení úkolů pro tuto nástěnku
+  const getBoardTasksUseCase = new GetBoardTasksUseCase(
+    boardRepo,
+    membershipRepo,
+    taskRepo,
+    taskParticipantRepo,
+    areaRepo,
+    userRepo,
+  );
+  const tasksResult = await getBoardTasksUseCase.execute(actor, boardId, {
+    filter: filterMode,
+  });
+  const tasks = tasksResult.success ? tasksResult.data : [];
+
+  // Načtení členů pro výběr řešitele
+  const getBoardMembersUseCase = new GetBoardMembersUseCase(
+    boardRepo,
+    membershipRepo,
+    userRepo,
+  );
+  const membersResult = await getBoardMembersUseCase.execute(actor, boardId);
+  const members = membersResult.success ? membersResult.data : [];
+
+  // Právo na vytvoření úkolu: ADMIN nebo kterýkoliv člen (OWNER, MANAGER, MEMBER)
+  const canCreateTask =
+    actor.global_role === "ADMIN" || role !== null;
 
   // Načtení pouze autorizovaných nástěnek aktuálního aktéra pro Switcher
   const getUserBoardsUseCase = new GetUserBoardsUseCase(boardRepo);
@@ -150,11 +201,15 @@ export default async function BoardPage({ params }: BoardPageProps) {
           </div>
         </div>
 
-        {/* Sekce oblastí Nástěnky */}
+        {/* Sekce oblastí a úkolů Nástěnky */}
         <AreaSection
           boardId={board.id}
           areas={areas}
-          canManage={canManageAreas}
+          tasks={tasks}
+          members={members}
+          canManageAreas={canManageAreas}
+          canCreateTask={canCreateTask}
+          currentFilter={filterMode}
         />
       </main>
     </div>
