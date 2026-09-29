@@ -29,6 +29,46 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 20 | Membership Use Cases (AddMember, RemoveMember, ChangeMemberRole, 34 testů, 401 celkem) | DONE | 24. 9. 2026 |
 | STEP 21 | LeaveBoardUseCase (dobrovolný odchod člena MEMBER/MANAGER, zákaz pro OWNER bez převodu, task cascade, MEMBER_LEAVE v Policy Engine, 20 nových testů, 426 celkem) | DONE | 24. 9. 2026 |
 | STEP 4 / STEP 22 | Board UI & Server Actions (Moje nástěnky /app, createBoardAction, Board detail /app/board/[boardId], Board Switcher, notFound() guards, 19 nových testů, 481 celkem) | DONE | 29. 9. 2026 |
+| STEP 1 (Area & Task) | Area & Task Query Layer (GetBoardAreasUseCase, GetBoardTasksUseCase, GetBoardMembersUseCase, batch metody UserRepository.findByIds a TaskParticipantRepository.findByTaskIds, DTO, obohacené BoardTaskView, filtrování ACTIVE/ARCHIVED/ALL, deterministické řazení, server authorization, cross-board izolace, 32 nových testů, 513 celkem) | DONE | 29. 9. 2026 |
+| STEP 2 (Area & Task) | Area UI & Server Actions (zobrazení oblastí na detailu nástěnky, responzivní grid, počet oblastí, empty state, CreateAreaDialog, EditAreaDialog, DeleteAreaDialog s potvrzením SMAZAT a kaskádou úkolů, createAreaAction, updateAreaAction, deleteAreaAction, role-based zobrazení pro OWNER/MANAGER/ADMIN vs MEMBER, Button danger, 36 nových testů, 549 celkem) | DONE | 29. 9. 2026 |
+
+### Podrobný rozsah dokončených kroků:
+
+#### STEP 1 – Area & Task Query Layer (Dokončeno)
+- **Implementované Use Casy:**
+  - `GetBoardAreasUseCase`: autorizované načtení oblastí nástěnky seřazených deterministicky podle názvu, kontrola členství a soft-delete stavu.
+  - `GetBoardTasksUseCase`: autorizované načtení úkolů nástěnky s filtrováním (`ACTIVE`, `ARCHIVED`, `ALL`) a obohaceným `BoardTaskView` DTO (název oblasti, jméno autora, jméno a e-mail řešitele, seznam spoluřešitelů s id/jménem/e-mailem).
+  - `GetBoardMembersUseCase`: autorizované načtení členů nástěnky pro výběr řešitelů a spoluřešitelů s jejich rolemi a údaji uživatele.
+- **Optimalizace a batch operace v repozitářích:**
+  - `UserRepository.findByIds(userIds)` pro dávkové načtení autorů a řešitelů bez N+1 dotazů.
+  - `TaskParticipantRepository.findByTaskIds(taskIds)` pro dávkové načtení spoluřešitelů pro celou sadu úkolů.
+- **DTO vrstva:** `createAreaSchema`, `updateAreaSchema`, `deleteAreaSchema`, `createTaskSchema`, `updateTaskSchema`, `taskFilterSchema`.
+- **Deterministické řazení úkolů:** Archivované úkoly jsou řazeny sestupně podle data aktualizace; aktivní úkoly jsou řazeny primárně podle termínu (nejdříve s termínem, vzestupně) s prioritou `SPĚCHÁ` přednostně.
+- **Důležité vymezení:** **Personal ordering zatím NENÍ implementováno** a nebylo nahrazeno globálním pořadím vydávaným za osobní pořadí.
+- **Testy a Quality Gates:** 32 nových testů (`tests/unit/area-task-queries.test.ts`), celkem 513/513 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
+#### STEP 2 – Area UI & Server Actions (Dokončeno)
+- **Area UI komponenty:**
+  - `AreaSection`: kontejner oblastí na stránce `/app/board/[boardId]`, responzivní grid (`grid-cols-1 md:grid-cols-2 lg:grid-cols-3`), počítadlo oblastí, empty state s výzvou k vytvoření.
+  - `AreaCard`: karta oblasti s názvem, popisem, editačními/mazacími tlačítky a explicitním placeholderem pro úkoly (*„Úkoly budou následovat v dalším kroku“*).
+  - `CreateAreaDialog`: modální formulář s `useActionState`, auto-focusem, validací (1–255 znaků) a zavřením na Escape.
+  - `EditAreaDialog`: modální formulář pro úpravu názvu a popisu se synchronizací stavu.
+  - `DeleteAreaDialog`: destruktivní dialog vyžadující přesné vepsání potvrzení `SMAZAT`.
+- **Server Actions:**
+  - `createAreaAction`, `updateAreaAction`, `deleteAreaAction` v `app/(authenticated)/app/board/[boardId]/area-actions.ts`.
+  - Architektonický tok: `UI → Server Action → ActorContext → Use Case → Policy → Repository → DB`.
+  - ActorContext je získáván striktně na serveru přes `resolveActorContext()`, klient neposílá důvěryhodnou identitu.
+  - `boardId` a `areaId` jsou nedůvěryhodné vstupy validované Use Casem vůči DB.
+  - `updateAreaAction` ověřuje skutečnou příslušnost k nástěnce načtením z DB (`area.boardId`).
+  - Po úspěšné mutaci probíhá revalidace cesty `/app/board/[boardId]`.
+- **Oprávnění a role:**
+  - `OWNER`, `MANAGER`, `ADMIN`: mohou oblasti vytvářet, upravovat a mazat (`canManage = true`).
+  - `MEMBER`: vidí oblasti, ale mutační ovládací prvky se nezobrazují; přímé volání Server Action skončí `AuthorizationError (INSUFFICIENT_ROLE)`.
+- **Bezpečné mazání oblasti:**
+  - Vyžaduje striktní shodu textu `SMAZAT` (odmítnuto Zodem i Use Casem při jakékoli odchylce).
+  - Volá `DeleteAreaUseCase`, který v transakci `UnitOfWork` kaskádově maže oblast i všechny související úkoly.
+- **UI infrastruktura:** `Button` rozšířen o variantu `danger` (zpětně kompatibilní).
+- **Testy a Quality Gates:** 36 nových unit testů (`tests/unit/area-ui-actions.test.ts`), celkem 549/549 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
 ---
 
@@ -46,8 +86,16 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. Area & Task UI (Server Actions a UI komponenty pro oblasti a úkoly v detailu nástěnky)
-2. Membership UI (přidávání/odebírání členů, správa rolí)
+1. **STEP 3 – Task Create & Display UI:**
+   - Navazuje na již hotovou query vrstvu (`GetBoardTasksUseCase`, `GetBoardMembersUseCase`), Task DTO, Task Policy, Task mutation Use Cases, Board Detail a existující Area UI.
+   - Vytvoření úkolu (`createTaskAction`, formulář/dialog), zobrazení úkolů v kartách oblastí (`TaskCard`, stav, termín, priorita, řešitel, spoluřešitelé).
+   - *Poznámka:* V aktuální fázi STEP 3 ještě není implementován.
+2. **STEP 4 (Area & Task) – Task Edit & Workflow UI:**
+   - Editace úkolu, změna stavu (workflow), změna řešitele a spoluřešitelů, změna termínu a priority, archivace a smazání úkolu (`SMAZAT`).
+3. **STEP 5 (Area & Task) – Personal Ordering:**
+   - Osobní řazení úkolů na nástěnce per uživatel (oddělené od globálního zobrazení).
+4. **Membership UI:**
+   - Přidávání/odebírání členů, správa rolí na nástěnce.
 
 ---
 
