@@ -1,6 +1,7 @@
 export type {
   BoardRecord,
   CreateBoardData,
+  UpdateBoardData,
   BoardRepository,
   UserBoardRecord,
 } from "./board-repository.port.ts";

@@ -25,6 +25,11 @@ export interface CreateBoardData {
   readonly createdBy: string;
 }
 
+export interface UpdateBoardData {
+  readonly name: string;
+  readonly description?: string | null;
+}
+
 /**
  * Záznam Nástěnky pro uživatelský přehled (Board Directory / Switcher).
  * Obsahuje roli uživatele na dané Nástěnce (nebo null pokud je ADMIN bez členství).
@@ -42,6 +47,7 @@ export interface BoardRepository {
   findById(boardId: string): Promise<BoardRecord | null>;
   findByIdForUpdate(boardId: string): Promise<BoardRecord | null>;
   create(data: CreateBoardData): Promise<BoardRecord>;
+  update(boardId: string, data: UpdateBoardData): Promise<BoardRecord>;
   softDelete(boardId: string, deletedAt: Date): Promise<void>;
   findActiveBoardsForUser(userId: string): Promise<UserBoardRecord[]>;
   findActiveBoardsForAdmin(adminUserId: string): Promise<UserBoardRecord[]>;

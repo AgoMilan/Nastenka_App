@@ -5,6 +5,12 @@ export {
 } from "./create-board.use-case.ts";
 
 export {
+  UpdateBoardUseCase,
+  type UpdateBoardInput,
+  type UpdateBoardOutput,
+} from "./update-board.use-case.ts";
+
+export {
   SoftDeleteBoardUseCase,
   type SoftDeleteBoardInput,
   type SoftDeleteBoardOutput,

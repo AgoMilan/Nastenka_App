@@ -139,6 +139,14 @@ class InMemoryBoardRepository implements BoardRepository {
     return { ...record };
   }
 
+  async update(boardId: string, data: any): Promise<BoardRecord> {
+    const existing = this.store.get(boardId);
+    if (!existing) throw new Error("Board not found");
+    const updated = { ...existing, ...data, updatedAt: new Date() };
+    this.store.set(boardId, updated);
+    return updated;
+  }
+
   async softDelete(boardId: string, deletedAt: Date): Promise<void> {
     const r = this.store.get(boardId);
     if (r) {

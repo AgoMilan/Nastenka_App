@@ -23,6 +23,7 @@ import {
 } from "@/modules/membership/index.ts";
 import { RoleBadge } from "@/components/boards/role-badge.tsx";
 import { BoardSwitcher } from "@/components/boards/board-switcher.tsx";
+import { EditBoardButton } from "@/components/boards/edit-board-dialog.tsx";
 import { LogoutButton } from "@/components/auth/logout-button.tsx";
 import { AreaSection } from "@/components/areas/area-section.tsx";
 import { MembersSection } from "@/components/members/members-section.tsx";
@@ -131,6 +132,10 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
   const canManageMembers =
     actor.global_role === "ADMIN" || role === "OWNER" || role === "MANAGER";
 
+  // Editace nástěnky: OWNER, MANAGER, ADMIN
+  const canEditBoard =
+    actor.global_role === "ADMIN" || role === "OWNER" || role === "MANAGER";
+
   // Změna rolí členů: pouze OWNER nebo ADMIN
   const canChangeRoles =
     actor.global_role === "ADMIN" || role === "OWNER";
@@ -213,8 +218,17 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
               )}
             </div>
 
-            <div className="text-xs text-zinc-400 sm:text-right shrink-0">
-              <p>Vytvořeno: {new Date(board.createdAt).toLocaleDateString("cs-CZ")}</p>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
+              {canEditBoard && (
+                <EditBoardButton
+                  boardId={board.id}
+                  boardName={board.name}
+                  boardDescription={board.description}
+                />
+              )}
+              <div className="text-xs text-zinc-400 sm:text-right">
+                <p>Vytvořeno: {new Date(board.createdAt).toLocaleDateString("cs-CZ")}</p>
+              </div>
             </div>
           </div>
 

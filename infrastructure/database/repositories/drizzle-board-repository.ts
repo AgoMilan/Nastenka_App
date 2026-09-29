@@ -5,6 +5,7 @@ import type {
   BoardRecord,
   BoardRepository,
   CreateBoardData,
+  UpdateBoardData,
   UserBoardRecord,
 } from "../../../modules/boards/application/ports/board-repository.port.ts";
 
@@ -71,6 +72,29 @@ export class DrizzleBoardRepository implements BoardRepository {
         description: data.description ?? null,
         createdBy: data.createdBy,
       })
+      .returning();
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      createdBy: row.createdBy,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+    };
+  }
+
+  async update(boardId: string, data: UpdateBoardData): Promise<BoardRecord> {
+    const rows = await this.db
+      .update(boards)
+      .set({
+        name: data.name,
+        description: data.description !== undefined ? data.description : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(boards.id, boardId))
       .returning();
 
     const row = rows[0];

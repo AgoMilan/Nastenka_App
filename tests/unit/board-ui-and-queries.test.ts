@@ -10,6 +10,7 @@ import type {
   MembershipRepository,
   UnitOfWork,
   UnitOfWorkRepositories,
+  UpdateBoardData,
   UserBoardRecord,
   UserRecord,
   UserRepository,
@@ -57,6 +58,21 @@ class InMemoryBoardRepository implements BoardRepository {
     };
     this.store.set(id, record);
     return { ...record };
+  }
+
+  async update(boardId: string, data: UpdateBoardData): Promise<BoardRecord> {
+    const existing = this.store.get(boardId);
+    if (!existing) {
+      throw new Error(`Board not found: ${boardId}`);
+    }
+    const updated: BoardRecord = {
+      ...existing,
+      name: data.name,
+      description: data.description !== undefined ? data.description : existing.description,
+      updatedAt: new Date(),
+    };
+    this.store.set(boardId, updated);
+    return { ...updated };
   }
 
   async softDelete(boardId: string, deletedAt: Date): Promise<void> {

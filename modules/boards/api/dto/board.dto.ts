@@ -19,3 +19,29 @@ export const createBoardSchema = z.object({
 });
 
 export type CreateBoardDto = z.infer<typeof createBoardSchema>;
+
+/**
+ * Validační schéma pro úpravu Nástěnky (UpdateBoard).
+ * Slouží jako UX validace na klientovi i autoritativní validace na serveru (ADR-009).
+ */
+export const updateBoardSchema = z.object({
+  boardId: z
+    .string({ required_error: "ID Nástěnky je povinné" })
+    .trim()
+    .min(1, "ID Nástěnky nesmí být prázdné")
+    .optional(),
+  name: z
+    .string({ required_error: "Zadejte prosím název nástěnky" })
+    .trim()
+    .min(1, "Název nástěnky nesmí být prázdný")
+    .max(255, "Název nástěnky nesmí přesáhnout 255 znaků"),
+  description: z
+    .string()
+    .trim()
+    .max(1000, "Popis nesmí přesáhnout 1000 znaků")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+});
+
+export type UpdateBoardDto = z.infer<typeof updateBoardSchema>;

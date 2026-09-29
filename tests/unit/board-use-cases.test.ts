@@ -10,6 +10,7 @@ import type {
   MembershipRepository,
   UnitOfWork,
   UnitOfWorkRepositories,
+  UpdateBoardData,
   UserRecord,
   UserRepository,
 } from "../../modules/boards/application/ports/index.ts";
@@ -70,6 +71,21 @@ class InMemoryBoardRepository implements BoardRepository {
     };
     this.store.set(record.id, record);
     return { ...record };
+  }
+
+  async update(boardId: string, data: UpdateBoardData): Promise<BoardRecord> {
+    const existing = this.store.get(boardId);
+    if (!existing) {
+      throw new Error(`Board not found: ${boardId}`);
+    }
+    const updated: BoardRecord = {
+      ...existing,
+      name: data.name,
+      description: data.description !== undefined ? data.description : existing.description,
+      updatedAt: new Date(),
+    };
+    this.store.set(boardId, updated);
+    return { ...updated };
   }
 
   async softDelete(boardId: string, deletedAt: Date): Promise<void> {
@@ -240,6 +256,10 @@ class TxBoardRepository implements BoardRepository {
 
   async create(data: CreateBoardData): Promise<BoardRecord> {
     return this.parent.create(data);
+  }
+
+  async update(boardId: string, data: UpdateBoardData): Promise<BoardRecord> {
+    return this.parent.update(boardId, data);
   }
 
   async softDelete(boardId: string, deletedAt: Date): Promise<void> {
