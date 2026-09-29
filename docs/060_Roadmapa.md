@@ -31,6 +31,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 4 / STEP 22 | Board UI & Server Actions (Moje nástěnky /app, createBoardAction, Board detail /app/board/[boardId], Board Switcher, notFound() guards, 19 nových testů, 481 celkem) | DONE | 29. 9. 2026 |
 | STEP 1 (Area & Task) | Area & Task Query Layer (GetBoardAreasUseCase, GetBoardTasksUseCase, GetBoardMembersUseCase, batch metody UserRepository.findByIds a TaskParticipantRepository.findByTaskIds, DTO, obohacené BoardTaskView, filtrování ACTIVE/ARCHIVED/ALL, deterministické řazení, server authorization, cross-board izolace, 32 nových testů, 513 celkem) | DONE | 29. 9. 2026 |
 | STEP 2 (Area & Task) | Area UI & Server Actions (zobrazení oblastí na detailu nástěnky, responzivní grid, počet oblastí, empty state, CreateAreaDialog, EditAreaDialog, DeleteAreaDialog s potvrzením SMAZAT a kaskádou úkolů, createAreaAction, updateAreaAction, deleteAreaAction, role-based zobrazení pro OWNER/MANAGER/ADMIN vs MEMBER, Button danger, 36 nových testů, 549 celkem) | DONE | 29. 9. 2026 |
+| STEP 3 (Area & Task) | Task Create & Display UI (vytvoření úkolu přes createTaskAction a CreateTaskDialog, zobrazení úkolů v kartách oblastí a sekci Bez oblasti přes TaskCard, výběr oblasti a řešitele, priorita BĚŽNÁ/SPĚCHÁ, termín splnění s detekcí po termínu, přepínač filtrů Aktivní/Archivované, serverová autorizace a cross-board izolace, 33 nových testů, 582 celkem) | DONE | 29. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -70,6 +71,22 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 - **UI infrastruktura:** `Button` rozšířen o variantu `danger` (zpětně kompatibilní).
 - **Testy a Quality Gates:** 36 nových unit testů (`tests/unit/area-ui-actions.test.ts`), celkem 549/549 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 3 – Task Create & Display UI (Dokončeno)
+- **Komponenty zobrazení úkolů (Task Display):**
+  - `TaskCard`: karta úkolu zobrazující název, popis (s `line-clamp-2`), barevný odznak stavu (`Nové`, `Převzaté`, `Rozpracované`, `Čeká se`, `Hotovo`, `Archivováno`), červený badge priority `● Spěchá`, termín splnění (`cs-CZ` formát s detekcí po termínu pro aktivní úkoly), přiřazeného řešitele (nebo kurzívou *„Nepřiřazeno“*), spoluřešitele a autora (*„Zadal/a: ...“*).
+  - Propojení s `AreaCard`: nahrazení dřívějšího statického placeholderu reálným seznamem `TaskCard`, počítadlo úkolů v záhlaví oblasti s českým skloňováním (`1 úkol`, `2–4 úkoly`, `5+ úkolů`), empty state (*„V této oblasti zatím nejsou žádné úkoly.“*) a tlačítko `+ Přidat úkol` pro oprávněné uživatele.
+  - Propojení s `AreaSection`: podpora pro zobrazení úkolů nezařazených do žádné oblasti (*„Bez oblasti“*), počítadlo celkového počtu úkolů nástěnky, přepínač filtru úkolů **Aktivní** vs. **Archivované** (`/app/board/[boardId]` vs. `?filter=ARCHIVED`).
+- **Vytvoření úkolu (Create Task):**
+  - `CreateTaskDialog`: modální dialog s React 19 `useActionState`, auto-focusem, validací povinného názvu (1–255 znaků), volitelným popisem (max. 10 000 znaků), výběrem oblasti (s možností bez oblasti a předvyplněním při volání z karty oblasti), výběrem řešitele ze seznamu členů nástěnky s českými rolemi, výběrem priority (`BĚŽNÁ` / `SPĚCHÁ`), polem termínu splnění (`type="date"`), obsluhou klávesy Escape, zakázáním opakovaného odeslání během `isPending` a zobrazením validačních chyb.
+  - `createTaskAction`: Server Action v `app/(authenticated)/app/board/[boardId]/task-actions.ts`. Autoritativní serverové získání ActorContextu přes `resolveActorContext()`, validace přes `createTaskSchema`, spuštění `CreateTaskUseCase` v transakci `DrizzleUnitOfWork` a revalidace cesty `/app/board/[boardId]`.
+- **Autorizace a bezpečnost (Security & Authorization):**
+  - Autoritativní odvození oprávnění: `TASK_CREATE` a `TASK_VIEW` jsou podle `TaskPolicy` povoleny všem členům nástěnky (`OWNER`, `MANAGER`, `MEMBER`) i systémovému administrátorovi (`ADMIN`).
+  - Cross-board izolace: backend Use Case autoritativně odmítá přiřazení oblasti z jiné nástěnky (`CROSS_BOARD_ACCESS`) i přiřazení řešitele, který není aktivním členem dané nástěnky (`CROSS_BOARD_ACCESS`).
+  - Zákaz přístupu k neexistujícím, neautorizovaným nebo logicky smazaným nástěnkám (`BOARD_DELETED`).
+- **Důležité vymezení rozsahu (Scope Boundaries):**
+  - V tomto kroku záměrně **NEJSOU implementovány**: mutace životního cyklu úkolu (změna stavu, editace názvu a popisu, změna řešitele, změna termínu/priority, převzetí úkolu, správa spoluřešitelů JOIN/LEAVE/REMOVE, archivace ani smazání úkolu `SMAZAT`), osobní řazení (personal ordering) ani Membership UI.
+- **Testy a Quality Gates:** 33 nových unit a integračních testů v `tests/unit/task-ui-actions.test.ts`, celkem 582/582 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -86,15 +103,11 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **STEP 3 – Task Create & Display UI:**
-   - Navazuje na již hotovou query vrstvu (`GetBoardTasksUseCase`, `GetBoardMembersUseCase`), Task DTO, Task Policy, Task mutation Use Cases, Board Detail a existující Area UI.
-   - Vytvoření úkolu (`createTaskAction`, formulář/dialog), zobrazení úkolů v kartách oblastí (`TaskCard`, stav, termín, priorita, řešitel, spoluřešitelé).
-   - *Poznámka:* V aktuální fázi STEP 3 ještě není implementován.
-2. **STEP 4 (Area & Task) – Task Edit & Workflow UI:**
-   - Editace úkolu, změna stavu (workflow), změna řešitele a spoluřešitelů, změna termínu a priority, archivace a smazání úkolu (`SMAZAT`).
-3. **STEP 5 (Area & Task) – Personal Ordering:**
+1. **STEP 4 (Area & Task) – Task Edit & Workflow UI:**
+   - Editace úkolu (název, popis), změna stavu (workflow přechody NOVÉ → PŘEVZATÉ → ROZPRACOVANÉ → ČEKÁ SE → HOTOVO), změna řešitele a spoluřešitelů (přiřazení, převzetí Take Over, připojení/odpojení spoluřešitele Join/Leave/Remove), změna termínu a priority, archivace a kontrolované smazání úkolu s potvrzením `SMAZAT`.
+2. **STEP 5 (Area & Task) – Personal Ordering:**
    - Osobní řazení úkolů na nástěnce per uživatel (oddělené od globálního zobrazení).
-4. **Membership UI:**
+3. **Membership UI:**
    - Přidávání/odebírání členů, správa rolí na nástěnce.
 
 ---

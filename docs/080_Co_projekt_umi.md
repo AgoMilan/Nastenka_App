@@ -60,7 +60,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - *Důležité:* Osobní řazení úkolů (personal ordering) zatím není implementováno.
 - **Area UI & Server Actions – Správa oblastí (STEP 2):**
   - **Zobrazení oblastí na Board Detail (`/app/board/[boardId]`):** Responzivní grid `AreaSection` (`grid-cols-1 md:grid-cols-2 lg:grid-cols-3`), počítadlo oblastí, empty state s výzvou k vytvoření první oblasti.
-  - **Karta oblasti (`AreaCard`):** Zobrazení názvu, popisu a akčních tlačítek pro editaci a smazání. Obsahuje explicitní placeholder pro úkoly (*„Úkoly budou následovat v dalším kroku“*).
+  - **Karta oblasti (`AreaCard`):** Zobrazení názvu, popisu a akčních tlačítek pro editaci a smazání.
   - **Vytvoření oblasti (`createAreaAction` & `CreateAreaDialog`):** Modální formulář s React 19 `useActionState`, auto-focusem, klientskou a serverovou validací (1–255 znaků) a zavřením na Escape.
   - **Úprava oblasti (`updateAreaAction` & `EditAreaDialog`):** Modální formulář pro změnu názvu a popisu se synchronizací stavu.
   - **Bezpečné smazání oblasti (`deleteAreaAction` & `DeleteAreaDialog`):** Destruktivní dialog vyžadující přesné vepsání potvrzení `SMAZAT` s tlačítkem `danger`. V transakci `UnitOfWork` kaskádově maže oblast i všechny v ní zařazené úkoly.
@@ -68,6 +68,11 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
     - `OWNER`, `MANAGER`, `ADMIN`: mají zobrazeny ovládací prvky pro správu oblastí (`canManageAreas = true`).
     - `MEMBER`: vidí oblasti, ale mutační prvky se nezobrazují. Přímé volání Server Actions je nezávisle autorizováno Use Casem a zamítnuto chybou `AuthorizationError (INSUFFICIENT_ROLE)`.
   - **Server Actions architektura:** `UI → Server Action → ActorContext → Use Case → Policy → Repository → DB`. Identita aktéra je získávána výhradně ze serverové session (`resolveActorContext`), vstupy jsou validovány Zodem a Use Casem, po mutaci probíhá revalidace cesty `/app/board/[boardId]`.
+- **Task Create & Display UI (STEP 3):**
+  - **Karta úkolu (`TaskCard`):** Zobrazení stavu (barevné badge pro `Nové`, `Převzaté`, `Rozpracované`, `Čeká se`, `Hotovo`, `Archivováno`), červený badge priority `● Spěchá`, formátovaný termín splnění (`cs-CZ` s červenou indikací `(po termínu)` pro nehotové/nearchivované úkoly), přiřazený řešitel (nebo kurzívou *„Nepřiřazeno“*), výpis spoluřešitelů a autor úkolu (*„Zadal/a: ...“*).
+  - **Vytvoření úkolu (`createTaskAction` & `CreateTaskDialog`):** Modální dialog s React 19 `useActionState`, auto-focusem, klientskou i serverovou validací délky názvu (1–255 znaků) a popisu (max. 10 000 znaků), výběrem oblasti (včetně volby bez oblasti a předvyplnění při volání z karty konkrétní oblasti), výběrem řešitele ze seznamu členů nástěnky s českými rolemi, volbou priority (`BĚŽNÁ` / `SPĚCHÁ`), polem termínu splnění (`type="date"`), obsluhou klávesy Escape a ochranou proti vícenásobnému odeslání během `isPending`.
+  - **Propojení s oblastmi (`AreaCard` & `AreaSection`):** Zobrazení úkolů přímo v kartách příslušných oblastí, dynamické počítadlo úkolů s českým skloňováním (`1 úkol`, `2–4 úkoly`, `5+ úkolů`), empty state oblasti (*„V této oblasti zatím nejsou žádné úkoly.“*), samostatný přehledný kontejner pro úkoly nezařazené do žádné oblasti (*„Bez oblasti“*), přepínač filtru úkolů **Aktivní** vs. **Archivované** (`/app/board/[boardId]` vs. `?filter=ARCHIVED`) a tlačítka `+ Přidat úkol`.
+  - **Autorizace a bezpečnost:** Právo na vytvoření úkolu `canCreateTask` je odvozeno z `TaskPolicy` (povoleno pro `OWNER`, `MANAGER`, `MEMBER` i `ADMIN`). Use case `CreateTaskUseCase` v transakci `UnitOfWork` autoritativně kontroluje platnost a aktivní stav nástěnky, členství volajícího, a striktně vynucuje cross-board izolaci oblasti (`areaId`) i řešitele (`assigneeId`).
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
 - **Databázové migrace:** 2 verzované Drizzle migrace (init schema + Better Auth persistence).
 
@@ -86,12 +91,15 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Area UI (`AreaSection`, `AreaCard`, `CreateAreaDialog`, `EditAreaDialog`, `DeleteAreaDialog`).
 - Area Server Actions (`createAreaAction`, `updateAreaAction`, `deleteAreaAction`).
 - Bezpečné kaskádové smazání oblasti a souvisejících úkolů s potvrzením `SMAZAT`.
-- Autoritativní server-side autorizace a ochrana proti UI bypassu.
+- Task Display UI (`TaskCard`, zobrazení úkolů v oblastech i sekci Bez oblasti, počítadla úkolů).
+- Task Create UI (`CreateTaskDialog`, `createTaskAction`, výběr oblasti, řešitele, priority a termínu).
+- Filtrování úkolů na nástěnce (Aktivní vs. Archivované).
+- Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
 ### Co ještě není implementováno
-- Task Create & Display UI (plánováno v navazujícím STEP 3).
-- Task Server Actions (vytváření, úprava, změna stavu, řešitelů, termínů, priorit, archivace, smazání).
-- Kompletní Task UI (karty úkolů, editační dialogy, workflow statusů).
+- Task Lifecycle & Mutations (změna stavu/workflow úkolu, editace názvu a popisu).
+- Task Reassignment & Participants UI (změna řešitele, převzetí úkolu Take Over, připojení/odpojení spoluřešitelů Join/Leave/Remove).
+- Task Archive & Delete UI (archivace a kontrolované smazání úkolu s potvrzením `SMAZAT`).
 - Membership UI (přidávání/odebírání členů, správa rolí na nástěnce).
 - Personal ordering (osobní řazení úkolů per uživatel).
 - Real-time notifikace, e-mailové notifikace, outbox worker.
@@ -124,9 +132,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky a Oblasti jsou hotové (STEP 4/22 a STEP 2); UI a Server Actions pro Úkoly (STEP 3+) a Správu členství zbývá implementovat v navazujících krocích.
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky, Oblasti a vytváření/zobrazení Úkolů jsou hotové (STEP 4/22, STEP 2 a STEP 3); navazující UI pro editaci úkolů, workflow statusů a správu členství zbývá implementovat v dalších krocích.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (549 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (582 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -135,6 +143,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 29. 9. 2026 | STEP 3 (Area & Task) – Task Create & Display UI (TaskCard, CreateTaskDialog, createTaskAction, propojení úkolů s oblastmi, úkoly Bez oblasti, filtry Aktivní/Archivované, cross-board ochrana, 33 nových testů, 582 celkem) |
 | 29. 9. 2026 | STEP 2 (Area & Task) – Area UI & Server Actions (AreaSection, AreaCard s placeholderem úkolů, dialogy vytvoření, úpravy a smazání s potvrzením SMAZAT, Server Actions, role-based viditelnost OWNER/MANAGER/ADMIN vs MEMBER, Button danger, 36 nových testů, 549 celkem) |
 | 29. 9. 2026 | STEP 1 (Area & Task) – Area & Task Query Layer (GetBoardAreasUseCase, GetBoardTasksUseCase, GetBoardMembersUseCase, batch repository metody UserRepository.findByIds a TaskParticipantRepository.findByTaskIds, DTO, obohacené BoardTaskView, filtrování, 32 nových testů, 513 celkem) |
 | 29. 9. 2026 | STEP 4 / STEP 22 – Board UI & Server Actions (Moje nástěnky /app, createBoardAction, Board detail /app/board/[boardId], Board Switcher, notFound() guards, 19 nových testů, 481 celkem) |
