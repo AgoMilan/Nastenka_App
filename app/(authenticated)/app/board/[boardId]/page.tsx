@@ -256,6 +256,9 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
           members={members}
           canManageAreas={canManageAreas}
           canCreateTask={canCreateTask}
+          currentUserRole={role}
+          currentUserId={actor.actor_user_id}
+          isGlobalAdmin={actor.global_role === "ADMIN"}
           currentFilter={filterMode}
         />
       </main>

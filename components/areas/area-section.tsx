@@ -19,6 +19,9 @@ export interface AreaSectionProps {
   readonly canManageAreas: boolean;
   readonly canCreateTask: boolean;
   readonly currentFilter?: "ACTIVE" | "ARCHIVED" | "ALL";
+  readonly currentUserRole?: string | null;
+  readonly currentUserId?: string;
+  readonly isGlobalAdmin?: boolean;
 }
 
 export function AreaSection({
@@ -29,6 +32,9 @@ export function AreaSection({
   canManageAreas,
   canCreateTask,
   currentFilter = "ACTIVE",
+  currentUserRole,
+  currentUserId,
+  isGlobalAdmin,
 }: AreaSectionProps) {
   const [isCreateAreaOpen, setIsCreateAreaOpen] = React.useState(false);
   const [isCreateTaskOpen, setIsCreateTaskOpen] = React.useState(false);
@@ -143,7 +149,16 @@ export function AreaSection({
               </h4>
               <div className="space-y-2.5">
                 {unassignedTasks.map((t) => (
-                  <TaskCard key={t.id} task={t} />
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    boardId={boardId}
+                    areas={areas}
+                    members={members}
+                    currentUserRole={currentUserRole}
+                    currentUserId={currentUserId}
+                    isGlobalAdmin={isGlobalAdmin}
+                  />
                 ))}
               </div>
             </div>
@@ -160,6 +175,11 @@ export function AreaSection({
               canManage={canManageAreas}
               canCreateTask={canCreateTask}
               onAddTask={() => handleOpenCreateTask(area.id)}
+              areas={areas}
+              members={members}
+              currentUserRole={currentUserRole}
+              currentUserId={currentUserId}
+              isGlobalAdmin={isGlobalAdmin}
             />
           ))}
 
@@ -181,7 +201,16 @@ export function AreaSection({
 
                 <div className="space-y-2.5">
                   {unassignedTasks.map((task) => (
-                    <TaskCard key={task.id} task={task} />
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      boardId={boardId}
+                      areas={areas}
+                      members={members}
+                      currentUserRole={currentUserRole}
+                      currentUserId={currentUserId}
+                      isGlobalAdmin={isGlobalAdmin}
+                    />
                   ))}
                 </div>
               </div>

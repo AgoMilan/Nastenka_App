@@ -3,6 +3,7 @@
 import * as React from "react";
 import type { AreaView } from "@/modules/areas/application/use-cases/index.ts";
 import type { BoardTaskView } from "@/modules/tasks/application/use-cases/get-board-tasks.use-case.ts";
+import type { BoardMemberView } from "@/modules/boards/application/use-cases/index.ts";
 import { EditAreaDialog } from "./edit-area-dialog.tsx";
 import { DeleteAreaDialog } from "./delete-area-dialog.tsx";
 import { TaskCard } from "@/components/tasks/task-card.tsx";
@@ -14,6 +15,11 @@ export interface AreaCardProps {
   readonly canManage: boolean;
   readonly canCreateTask: boolean;
   readonly onAddTask?: () => void;
+  readonly areas?: AreaView[];
+  readonly members?: BoardMemberView[];
+  readonly currentUserRole?: string | null;
+  readonly currentUserId?: string;
+  readonly isGlobalAdmin?: boolean;
 }
 
 export function AreaCard({
@@ -23,6 +29,11 @@ export function AreaCard({
   canManage,
   canCreateTask,
   onAddTask,
+  areas,
+  members,
+  currentUserRole,
+  currentUserId,
+  isGlobalAdmin,
 }: AreaCardProps) {
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
@@ -92,7 +103,16 @@ export function AreaCard({
             <>
               <div className="space-y-2.5">
                 {tasks.map((task) => (
-                  <TaskCard key={task.id} task={task} />
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    boardId={boardId}
+                    areas={areas}
+                    members={members}
+                    currentUserRole={currentUserRole}
+                    currentUserId={currentUserId}
+                    isGlobalAdmin={isGlobalAdmin}
+                  />
                 ))}
               </div>
 

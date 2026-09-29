@@ -1,9 +1,18 @@
 import * as React from "react";
 import type { BoardTaskView } from "@/modules/tasks/application/use-cases/get-board-tasks.use-case.ts";
 import type { TaskStatus } from "@/modules/tasks/application/ports/task-repository.port.ts";
+import type { AreaView } from "@/modules/areas/application/use-cases/index.ts";
+import type { BoardMemberView } from "@/modules/boards/application/use-cases/index.ts";
+import { EditTaskDialog } from "./edit-task-dialog.tsx";
 
 export interface TaskCardProps {
   readonly task: BoardTaskView;
+  readonly boardId?: string;
+  readonly areas?: AreaView[];
+  readonly members?: BoardMemberView[];
+  readonly currentUserRole?: string | null;
+  readonly currentUserId?: string;
+  readonly isGlobalAdmin?: boolean;
 }
 
 const STATUS_CONFIG: Record<
@@ -36,7 +45,19 @@ const STATUS_CONFIG: Record<
   },
 };
 
-export function TaskCard({ task }: TaskCardProps) {
+export function TaskCard({
+  task,
+  boardId,
+  areas,
+  members,
+  currentUserRole,
+  currentUserId,
+  isGlobalAdmin = false,
+}: TaskCardProps) {
+  const [isEditOpen, setIsEditOpen] = React.useState(false);
+
+  const canEdit = isGlobalAdmin || currentUserRole !== null;
+
   const statusConfig = STATUS_CONFIG[task.status] ?? {
     label: task.status,
     className: "bg-zinc-100 text-zinc-700 border-zinc-200",
@@ -53,22 +74,37 @@ export function TaskCard({ task }: TaskCardProps) {
     : null;
 
   return (
-    <article
-      className="rounded-lg border border-zinc-200 bg-white p-3.5 shadow-2xs transition-shadow hover:shadow-xs text-left"
-      aria-labelledby={`task-title-${task.id}`}
-    >
-      {/* Horní řádek: Stav + Priorita */}
+    <>
+      <article
+        className="rounded-lg border border-zinc-200 bg-white p-3.5 shadow-2xs transition-shadow hover:shadow-xs text-left"
+        aria-labelledby={`task-title-${task.id}`}
+      >
+      {/* Horní řádek: Stav + Priorita + Upravit */}
       <div className="flex items-center justify-between gap-2 mb-2">
-        <span
-          className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${statusConfig.className}`}
-        >
-          {statusConfig.label}
-        </span>
-
-        {task.priority === "SPĚCHÁ" && (
-          <span className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
-            <span>●</span> Spěchá
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${statusConfig.className}`}
+          >
+            {statusConfig.label}
           </span>
+
+          {task.priority === "SPĚCHÁ" && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+              <span>●</span> Spěchá
+            </span>
+          )}
+        </div>
+
+        {canEdit && boardId && (
+          <button
+            type="button"
+            onClick={() => setIsEditOpen(true)}
+            className="rounded p-1 text-xs text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors"
+            title="Upravit úkol"
+            aria-label={`Upravit úkol ${task.title}`}
+          >
+            ✏️
+          </button>
         )}
       </div>
 
@@ -134,5 +170,20 @@ export function TaskCard({ task }: TaskCardProps) {
         </div>
       </div>
     </article>
+
+    {isEditOpen && boardId && (
+      <EditTaskDialog
+        boardId={boardId}
+        task={task}
+        areas={areas ?? []}
+        members={members ?? []}
+        currentUserRole={currentUserRole}
+        currentUserId={currentUserId}
+        isGlobalAdmin={isGlobalAdmin}
+        isOpen={isEditOpen}
+        onClose={() => setIsEditOpen(false)}
+      />
+    )}
+  </>
   );
 }

@@ -77,6 +77,35 @@ export const updateTaskSchema = z.object({
 
 export type UpdateTaskDto = z.infer<typeof updateTaskSchema>;
 
+export const editTaskSchema = z.object({
+  boardId: z
+    .string({ required_error: "ID Nástěnky je povinné" })
+    .trim()
+    .min(1, "ID Nástěnky nesmí být prázdné"),
+  taskId: z
+    .string({ required_error: "ID úkolu je povinné" })
+    .trim()
+    .min(1, "ID úkolu nesmí být prázdné"),
+  title: z
+    .string({ required_error: "Zadejte prosím název úkolu" })
+    .trim()
+    .min(1, "Název úkolu nesmí být prázdný")
+    .max(255, "Název úkolu nesmí přesáhnout 255 znaků"),
+  description: z
+    .string()
+    .trim()
+    .max(10000, "Popis nesmí přesáhnout 10 000 znaků")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  areaId: z.string().trim().min(1).optional().nullable().or(z.literal("")),
+  assigneeId: z.string().trim().min(1).optional().nullable().or(z.literal("")),
+  priority: taskPrioritySchema.default("BĚŽNÁ"),
+  dueDate: optionalDueDateSchema,
+});
+
+export type EditTaskDto = z.infer<typeof editTaskSchema>;
+
 export const changeTaskAssigneeSchema = z.object({
   taskId: z
     .string({ required_error: "ID úkolu je povinné" })

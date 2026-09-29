@@ -5,8 +5,20 @@ import { revalidatePath } from "next/cache";
 import { resolveActorContext } from "@/infrastructure/auth/index.ts";
 import { getDb } from "@/infrastructure/database/index.ts";
 import { DrizzleUnitOfWork } from "@/infrastructure/database/repositories/drizzle-unit-of-work.ts";
-import { CreateTaskUseCase } from "@/modules/tasks/application/use-cases/create-task.use-case.ts";
-import { createTaskSchema } from "@/modules/tasks/api/dto/task.dto.ts";
+import { DrizzleTaskRepository } from "@/infrastructure/database/repositories/drizzle-task-repository.ts";
+import {
+  CreateTaskUseCase,
+  UpdateTaskUseCase,
+  ChangeTaskAssigneeUseCase,
+  ChangeTaskAreaUseCase,
+  ChangeTaskDueDateUseCase,
+  ChangeTaskPriorityUseCase,
+} from "@/modules/tasks/application/use-cases/index.ts";
+import {
+  createTaskSchema,
+  editTaskSchema,
+  changeTaskAssigneeSchema,
+} from "@/modules/tasks/api/dto/task.dto.ts";
 
 export interface TaskActionState {
   readonly success: boolean;
@@ -103,5 +115,286 @@ export async function createTaskAction(
   return {
     success: true,
     taskId: result.data.id,
+  };
+}
+
+/**
+ * Server Action pro úpravu existujícího Úkolu (UpdateTask).
+ *
+ * Invarianty (STEP 5A):
+ * 1. ActorContext je získáván výhradně ze serverové session (nikdy z parametrů klienta).
+ * 2. Vstup je autoritativně validován pomocí Zod schématu (editTaskSchema).
+ * 3. Zkontroluje existenci úkolu a shodu boardId (cross-board izolace).
+ * 4. Změněná pole deleguje na odpovídající doménové Use Casy (UpdateTaskUseCase,
+ *    ChangeTaskAssigneeUseCase, ChangeTaskAreaUseCase, ChangeTaskDueDateUseCase, ChangeTaskPriorityUseCase).
+ * 5. Žádná přímá DB operace mimo Use Casy a repozitáře.
+ * 6. Autorizace každého pole je striktně řízena backendovou TaskPolicy:
+ *    - title, description, priority, assigneeId: povoleno všem členům Nástěnky
+ *    - areaId, dueDate: vyžaduje roli Řešitele, Spoluřešitele, Správce nebo Vlastníka
+ * 7. Po úspěchu revaliduje cestu /app/board/[boardId].
+ */
+export async function updateTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+  const rawTitle = formData.get("title");
+  const rawDescription = formData.get("description");
+  const rawAreaId = formData.get("areaId");
+  const rawAssigneeId = formData.get("assigneeId");
+  const rawPriority = formData.get("priority");
+  const rawDueDate = formData.get("dueDate");
+
+  const parsed = editTaskSchema.safeParse({
+    boardId: typeof rawBoardId === "string" ? rawBoardId : "",
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+    title: typeof rawTitle === "string" ? rawTitle : "",
+    description:
+      typeof rawDescription === "string" ? rawDescription : undefined,
+    areaId:
+      typeof rawAreaId === "string" && rawAreaId.trim() !== ""
+        ? rawAreaId.trim()
+        : null,
+    assigneeId:
+      typeof rawAssigneeId === "string" && rawAssigneeId.trim() !== ""
+        ? rawAssigneeId.trim()
+        : null,
+    priority:
+      typeof rawPriority === "string" && rawPriority ? rawPriority : "BĚŽNÁ",
+    dueDate:
+      typeof rawDueDate === "string" && rawDueDate.trim() !== ""
+        ? rawDueDate.trim()
+        : null,
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný vstup formuláře.",
+    };
+  }
+
+  const db = getDb();
+  const taskRepo = new DrizzleTaskRepository(db);
+  const existingTask = await taskRepo.findById(parsed.data.taskId);
+
+  if (!existingTask) {
+    return {
+      success: false,
+      error: "Úkol nebyl nalezen.",
+    };
+  }
+
+  if (existingTask.boardId !== parsed.data.boardId) {
+    return {
+      success: false,
+      error: "Úkol nepatří do zadané Nástěnky.",
+    };
+  }
+
+  const uow = new DrizzleUnitOfWork(db);
+
+  // 1. Úprava názvu a/nebo popisu (UpdateTaskUseCase)
+  const newTitle = parsed.data.title.trim();
+  const newDescription =
+    parsed.data.description && parsed.data.description.trim().length > 0
+      ? parsed.data.description.trim()
+      : null;
+  const currentDescription =
+    existingTask.description && existingTask.description.trim().length > 0
+      ? existingTask.description.trim()
+      : null;
+
+  if (newTitle !== existingTask.title || newDescription !== currentDescription) {
+    const updateTaskUseCase = new UpdateTaskUseCase(uow);
+    const updateResult = await updateTaskUseCase.execute(actor, {
+      taskId: parsed.data.taskId,
+      title: newTitle,
+      description: newDescription,
+    });
+    if (!updateResult.success) {
+      return {
+        success: false,
+        error: updateResult.error.message,
+      };
+    }
+  }
+
+  // 2. Změna řešitele (ChangeTaskAssigneeUseCase)
+  const newAssigneeId =
+    parsed.data.assigneeId && parsed.data.assigneeId.trim().length > 0
+      ? parsed.data.assigneeId.trim()
+      : null;
+  const currentAssigneeId = existingTask.assigneeId;
+
+  if (newAssigneeId !== currentAssigneeId) {
+    const changeAssigneeUseCase = new ChangeTaskAssigneeUseCase(uow);
+    const assigneeResult = await changeAssigneeUseCase.execute(actor, {
+      taskId: parsed.data.taskId,
+      assigneeId: newAssigneeId,
+    });
+    if (!assigneeResult.success) {
+      return {
+        success: false,
+        error: assigneeResult.error.message,
+      };
+    }
+  }
+
+  // 3. Změna oblasti (ChangeTaskAreaUseCase)
+  const newAreaId =
+    parsed.data.areaId && parsed.data.areaId.trim().length > 0
+      ? parsed.data.areaId.trim()
+      : null;
+  const currentAreaId = existingTask.areaId;
+
+  if (newAreaId !== currentAreaId) {
+    const changeAreaUseCase = new ChangeTaskAreaUseCase(uow);
+    const areaResult = await changeAreaUseCase.execute(actor, {
+      taskId: parsed.data.taskId,
+      newAreaId: newAreaId,
+    });
+    if (!areaResult.success) {
+      return {
+        success: false,
+        error: areaResult.error.message,
+      };
+    }
+  }
+
+  // 4. Změna termínu (ChangeTaskDueDateUseCase)
+  let newDueDate: Date | null = null;
+  if (
+    parsed.data.dueDate &&
+    typeof parsed.data.dueDate === "string" &&
+    parsed.data.dueDate.trim().length > 0
+  ) {
+    newDueDate = new Date(parsed.data.dueDate.trim());
+  } else if (parsed.data.dueDate instanceof Date) {
+    newDueDate = parsed.data.dueDate;
+  }
+
+  const currentDueDate = existingTask.dueDate
+    ? new Date(existingTask.dueDate)
+    : null;
+
+  const dueDateChanged =
+    (newDueDate === null && currentDueDate !== null) ||
+    (newDueDate !== null && currentDueDate === null) ||
+    (newDueDate !== null &&
+      currentDueDate !== null &&
+      newDueDate.getTime() !== currentDueDate.getTime());
+
+  if (dueDateChanged) {
+    const changeDueDateUseCase = new ChangeTaskDueDateUseCase(uow);
+    const dueDateResult = await changeDueDateUseCase.execute(actor, {
+      taskId: parsed.data.taskId,
+      dueDate: newDueDate,
+    });
+    if (!dueDateResult.success) {
+      return {
+        success: false,
+        error: dueDateResult.error.message,
+      };
+    }
+  }
+
+  // 5. Změna priority (ChangeTaskPriorityUseCase)
+  const newPriority = parsed.data.priority;
+  const currentPriority = existingTask.priority;
+
+  if (newPriority !== currentPriority) {
+    const changePriorityUseCase = new ChangeTaskPriorityUseCase(uow);
+    const priorityResult = await changePriorityUseCase.execute(actor, {
+      taskId: parsed.data.taskId,
+      priority: newPriority,
+    });
+    if (!priorityResult.success) {
+      return {
+        success: false,
+        error: priorityResult.error.message,
+      };
+    }
+  }
+
+  revalidatePath(`/app/board/${parsed.data.boardId}`);
+
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+
+/**
+ * Server Action pro samostatnou změnu řešitele úkolu (ChangeTaskAssignee).
+ */
+export async function changeTaskAssigneeAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+  const rawAssigneeId = formData.get("assigneeId");
+
+  const parsed = changeTaskAssigneeSchema.safeParse({
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+    assigneeId:
+      typeof rawAssigneeId === "string" && rawAssigneeId.trim() !== ""
+        ? rawAssigneeId.trim()
+        : null,
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný vstup formuláře.",
+    };
+  }
+
+  const db = getDb();
+  const uow = new DrizzleUnitOfWork(db);
+  const changeAssigneeUseCase = new ChangeTaskAssigneeUseCase(uow);
+
+  const result = await changeAssigneeUseCase.execute(actor, {
+    taskId: parsed.data.taskId,
+    assigneeId: parsed.data.assigneeId || null,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  const boardId = typeof rawBoardId === "string" ? rawBoardId.trim() : "";
+  if (boardId) {
+    revalidatePath(`/app/board/${boardId}`);
+  }
+
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
   };
 }
