@@ -5,11 +5,14 @@ import { resolveActorContext, auth } from "@/infrastructure/auth/index.ts";
 import { getDb } from "@/infrastructure/database/index.ts";
 import { DrizzleBoardRepository } from "@/infrastructure/database/repositories/drizzle-board-repository.ts";
 import { DrizzleMembershipRepository } from "@/infrastructure/database/repositories/drizzle-membership-repository.ts";
+import { DrizzleAreaRepository } from "@/infrastructure/database/repositories/drizzle-area-repository.ts";
 import { GetBoardDetailUseCase } from "@/modules/boards/application/use-cases/get-board-detail.use-case.ts";
 import { GetUserBoardsUseCase } from "@/modules/boards/application/use-cases/get-user-boards.use-case.ts";
+import { GetBoardAreasUseCase } from "@/modules/areas/application/use-cases/get-board-areas.use-case.ts";
 import { RoleBadge } from "@/components/boards/role-badge.tsx";
 import { BoardSwitcher } from "@/components/boards/board-switcher.tsx";
 import { LogoutButton } from "@/components/auth/logout-button.tsx";
+import { AreaSection } from "@/components/areas/area-section.tsx";
 
 interface BoardPageProps {
   params: Promise<{
@@ -20,12 +23,13 @@ interface BoardPageProps {
 /**
  * Stránka detailu Nástěnky: /app/board/[boardId]
  *
- * Invarianty (STEP 4 / STEP 22):
+ * Invarianty:
  * 1. Autoritativní přístup: Ověřuje existenci, aktivní stav (deleted_at IS NULL)
  *    a členství/admin práva. Při neúspěchu volá notFound().
  * 2. Zobrazuje: Název nástěnky, české označení role přihlášeného uživatele,
  *    navigaci zpět na „Moje nástěnky“ a Board Switcher pro přepínání.
- * 3. Neimplementuje Areas ani Tasks (slouží jako bezpečný kontejner pro STEP 5+).
+ * 3. Zobrazuje Oblasti nástěnky přes GetBoardAreasUseCase a AreaSection.
+ * 4. Umožňuje oprávněným rolím (OWNER, MANAGER, ADMIN) vytvářet, upravovat a mazat oblasti.
  */
 export default async function BoardPage({ params }: BoardPageProps) {
   const { boardId } = await params;
@@ -40,6 +44,7 @@ export default async function BoardPage({ params }: BoardPageProps) {
   const db = getDb();
   const boardRepo = new DrizzleBoardRepository(db);
   const membershipRepo = new DrizzleMembershipRepository(db);
+  const areaRepo = new DrizzleAreaRepository(db);
 
   const getBoardDetailUseCase = new GetBoardDetailUseCase(
     boardRepo,
@@ -53,6 +58,18 @@ export default async function BoardPage({ params }: BoardPageProps) {
   }
 
   const { board, role } = boardDetailResult.data;
+
+  // Načtení oblastí pro tuto nástěnku
+  const getBoardAreasUseCase = new GetBoardAreasUseCase(
+    boardRepo,
+    membershipRepo,
+    areaRepo,
+  );
+  const areasResult = await getBoardAreasUseCase.execute(actor, boardId);
+  const areas = areasResult.success ? areasResult.data : [];
+
+  const canManageAreas =
+    actor.global_role === "ADMIN" || role === "OWNER" || role === "MANAGER";
 
   // Načtení pouze autorizovaných nástěnek aktuálního aktéra pro Switcher
   const getUserBoardsUseCase = new GetUserBoardsUseCase(boardRepo);
@@ -133,16 +150,12 @@ export default async function BoardPage({ params }: BoardPageProps) {
           </div>
         </div>
 
-        {/* Pracovní prostor – placeholder pro navazující kroky (Oblasti a Úkoly) */}
-        <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/50 p-8 sm:p-12 text-center text-zinc-500">
-          <span className="text-3xl block mb-3">📌</span>
-          <h2 className="text-base font-semibold text-zinc-800">
-            Pracovní prostor nástěnky
-          </h2>
-          <p className="mt-1 text-sm max-w-md mx-auto">
-            Základní kontejner nástěnky je připraven. Oblasti a úkoly budou následovat v dalších krocích vývoje.
-          </p>
-        </div>
+        {/* Sekce oblastí Nástěnky */}
+        <AreaSection
+          boardId={board.id}
+          areas={areas}
+          canManage={canManageAreas}
+        />
       </main>
     </div>
   );
