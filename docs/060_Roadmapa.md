@@ -28,6 +28,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 19 | Area & Task Use Cases (3 Area + 13 Task Use Cases, Ports & Adapters, 74 testů, 403 celkem) | DONE | 24. 9. 2026 |
 | STEP 20 | Membership Use Cases (AddMember, RemoveMember, ChangeMemberRole, 34 testů, 401 celkem) | DONE | 24. 9. 2026 |
 | STEP 21 | LeaveBoardUseCase (dobrovolný odchod člena MEMBER/MANAGER, zákaz pro OWNER bez převodu, task cascade, MEMBER_LEAVE v Policy Engine, 20 nových testů, 426 celkem) | DONE | 24. 9. 2026 |
+| STEP 4 / STEP 22 | Board UI & Server Actions (Moje nástěnky /app, createBoardAction, Board detail /app/board/[boardId], Board Switcher, notFound() guards, 19 nových testů, 481 celkem) | DONE | 29. 9. 2026 |
 
 ---
 
@@ -45,7 +46,7 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. Board, Area & Task UI (Server Actions, UI komponenty pro nástěnky, oblasti a úkoly)
+1. Area & Task UI (Server Actions a UI komponenty pro oblasti a úkoly v detailu nástěnky)
 2. Membership UI (přidávání/odebírání členů, správa rolí)
 
 ---
