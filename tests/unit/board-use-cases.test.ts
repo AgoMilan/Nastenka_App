@@ -83,6 +83,14 @@ class InMemoryBoardRepository implements BoardRepository {
     }
   }
 
+  async findActiveBoardsForUser(userId: string) {
+    return [];
+  }
+
+  async findActiveBoardsForAdmin(adminUserId: string) {
+    return [];
+  }
+
   clone(): Map<string, BoardRecord> {
     return new Map(
       Array.from(this.store.entries()).map(([k, v]) => [k, { ...v }]),
@@ -221,6 +229,14 @@ class TxBoardRepository implements BoardRepository {
 
   async softDelete(boardId: string, deletedAt: Date): Promise<void> {
     return this.parent.softDelete(boardId, deletedAt);
+  }
+
+  async findActiveBoardsForUser(userId: string) {
+    return this.parent.findActiveBoardsForUser(userId);
+  }
+
+  async findActiveBoardsForAdmin(adminUserId: string) {
+    return this.parent.findActiveBoardsForAdmin(adminUserId);
   }
 }
 

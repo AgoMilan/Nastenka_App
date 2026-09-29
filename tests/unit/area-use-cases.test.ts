@@ -149,6 +149,14 @@ class InMemoryBoardRepository implements BoardRepository {
       this.store.set(boardId, { ...r, deletedAt });
     }
   }
+
+  async findActiveBoardsForUser(userId: string) {
+    return [];
+  }
+
+  async findActiveBoardsForAdmin(adminUserId: string) {
+    return [];
+  }
 }
 
 class InMemoryMembershipRepository implements MembershipRepository {

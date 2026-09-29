@@ -15,3 +15,11 @@ export {
   type TransferOwnershipInput,
   type TransferOwnershipOutput,
 } from "./transfer-ownership.use-case.ts";
+
+export { GetUserBoardsUseCase } from "./get-user-boards.use-case.ts";
+
+export {
+  GetBoardDetailUseCase,
+  type BoardDetailOutput,
+} from "./get-board-detail.use-case.ts";
+

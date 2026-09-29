@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
-import { boards } from "../../../database/schema/index.ts";
+import { and, asc, eq, isNull } from "drizzle-orm";
+import { boards, memberships } from "../../../database/schema/index.ts";
 import type { Database } from "../client.ts";
 import type {
   BoardRecord,
   BoardRepository,
   CreateBoardData,
+  UserBoardRecord,
 } from "../../../modules/boards/application/ports/board-repository.port.ts";
 
 export class DrizzleBoardRepository implements BoardRepository {
@@ -92,5 +93,53 @@ export class DrizzleBoardRepository implements BoardRepository {
         updatedAt: new Date(),
       })
       .where(eq(boards.id, boardId));
+  }
+
+  async findActiveBoardsForUser(userId: string): Promise<UserBoardRecord[]> {
+    const rows = await this.db
+      .select({
+        id: boards.id,
+        name: boards.name,
+        description: boards.description,
+        role: memberships.role,
+        createdAt: boards.createdAt,
+        updatedAt: boards.updatedAt,
+      })
+      .from(boards)
+      .innerJoin(
+        memberships,
+        and(
+          eq(memberships.boardId, boards.id),
+          eq(memberships.userId, userId),
+        ),
+      )
+      .where(isNull(boards.deletedAt))
+      .orderBy(asc(boards.name));
+
+    return rows;
+  }
+
+  async findActiveBoardsForAdmin(adminUserId: string): Promise<UserBoardRecord[]> {
+    const rows = await this.db
+      .select({
+        id: boards.id,
+        name: boards.name,
+        description: boards.description,
+        role: memberships.role,
+        createdAt: boards.createdAt,
+        updatedAt: boards.updatedAt,
+      })
+      .from(boards)
+      .leftJoin(
+        memberships,
+        and(
+          eq(memberships.boardId, boards.id),
+          eq(memberships.userId, adminUserId),
+        ),
+      )
+      .where(isNull(boards.deletedAt))
+      .orderBy(asc(boards.name));
+
+    return rows;
   }
 }
