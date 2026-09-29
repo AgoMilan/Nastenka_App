@@ -23,3 +23,8 @@ export {
   type BoardDetailOutput,
 } from "./get-board-detail.use-case.ts";
 
+export {
+  GetBoardMembersUseCase,
+  type BoardMemberView,
+} from "./get-board-members.use-case.ts";
+

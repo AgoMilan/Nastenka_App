@@ -16,6 +16,7 @@ export interface TaskParticipantRecord {
 
 export interface TaskParticipantRepository {
   findByTaskId(taskId: string): Promise<TaskParticipantRecord[]>;
+  findByTaskIds(taskIds: string[]): Promise<TaskParticipantRecord[]>;
   findByTaskAndUser(
     taskId: string,
     userId: string,

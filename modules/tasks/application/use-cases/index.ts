@@ -62,3 +62,11 @@ export {
   DeleteTaskUseCase,
   type DeleteTaskInput,
 } from "./delete-task.use-case.ts";
+
+export {
+  GetBoardTasksUseCase,
+  type BoardTaskView,
+  type BoardTaskParticipantView,
+  type TaskFilterMode,
+  type GetBoardTasksOptions,
+} from "./get-board-tasks.use-case.ts";

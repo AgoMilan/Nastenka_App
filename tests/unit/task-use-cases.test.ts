@@ -236,6 +236,15 @@ class InMemoryUserRepository implements UserRepository {
     const u = this.store.get(userId);
     return u ? { ...u } : null;
   }
+
+  async findByIds(userIds: string[]): Promise<UserRecord[]> {
+    const results: UserRecord[] = [];
+    for (const id of userIds) {
+      const u = this.store.get(id);
+      if (u) results.push({ ...u });
+    }
+    return results;
+  }
 }
 
 class InMemoryTaskRepository implements TaskRepository {
@@ -309,6 +318,11 @@ class InMemoryTaskParticipantRepository implements TaskParticipantRepository {
 
   async findByTaskId(taskId: string): Promise<TaskParticipantRecord[]> {
     return Array.from(this.store.values()).filter((p) => p.taskId === taskId);
+  }
+
+  async findByTaskIds(taskIds: string[]): Promise<TaskParticipantRecord[]> {
+    const taskIdSet = new Set(taskIds);
+    return Array.from(this.store.values()).filter((p) => taskIdSet.has(p.taskId));
   }
 
   async findByTaskAndUser(

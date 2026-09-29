@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { users } from "../../../database/schema/index.ts";
 import type { Database } from "../client.ts";
 import type {
@@ -40,5 +40,32 @@ export class DrizzleUserRepository implements UserRepository {
       isActive: row.isActive,
       deletedAt: row.deletedAt,
     };
+  }
+
+  async findByIds(userIds: string[]): Promise<UserRecord[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        globalRole: users.globalRole,
+        isActive: users.isActive,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(inArray(users.id, userIds));
+
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      globalRole: row.globalRole,
+      isActive: row.isActive,
+      deletedAt: row.deletedAt,
+    }));
   }
 }

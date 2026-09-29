@@ -199,6 +199,15 @@ class InMemoryUserRepository implements UserRepository {
     const u = this.store.get(userId);
     return u ? { ...u } : null;
   }
+
+  async findByIds(userIds: string[]): Promise<UserRecord[]> {
+    const results: UserRecord[] = [];
+    for (const id of userIds) {
+      const u = this.store.get(id);
+      if (u) results.push({ ...u });
+    }
+    return results;
+  }
 }
 
 class TxBoardRepository implements BoardRepository {

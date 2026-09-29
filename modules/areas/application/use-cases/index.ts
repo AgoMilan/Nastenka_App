@@ -12,3 +12,8 @@ export {
   DeleteAreaUseCase,
   type DeleteAreaInput,
 } from "./delete-area.use-case.ts";
+
+export {
+  GetBoardAreasUseCase,
+  type AreaView,
+} from "./get-board-areas.use-case.ts";

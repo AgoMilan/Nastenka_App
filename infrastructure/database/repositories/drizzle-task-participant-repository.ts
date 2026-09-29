@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { taskParticipants } from "../../../database/schema/index.ts";
 import type { Database } from "../client.ts";
 import type {
@@ -18,6 +18,25 @@ export class DrizzleTaskParticipantRepository implements TaskParticipantReposito
       .select()
       .from(taskParticipants)
       .where(eq(taskParticipants.taskId, taskId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      taskId: row.taskId,
+      userId: row.userId,
+      role: row.role,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async findByTaskIds(taskIds: string[]): Promise<TaskParticipantRecord[]> {
+    if (taskIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select()
+      .from(taskParticipants)
+      .where(inArray(taskParticipants.taskId, taskIds));
 
     return rows.map((row) => ({
       id: row.id,
