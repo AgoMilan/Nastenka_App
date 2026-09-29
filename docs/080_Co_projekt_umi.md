@@ -73,6 +73,14 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Vytvoření úkolu (`createTaskAction` & `CreateTaskDialog`):** Modální dialog s React 19 `useActionState`, auto-focusem, klientskou i serverovou validací délky názvu (1–255 znaků) a popisu (max. 10 000 znaků), výběrem oblasti (včetně volby bez oblasti a předvyplnění při volání z karty konkrétní oblasti), výběrem řešitele ze seznamu členů nástěnky s českými rolemi, volbou priority (`BĚŽNÁ` / `SPĚCHÁ`), polem termínu splnění (`type="date"`), obsluhou klávesy Escape a ochranou proti vícenásobnému odeslání během `isPending`.
   - **Propojení s oblastmi (`AreaCard` & `AreaSection`):** Zobrazení úkolů přímo v kartách příslušných oblastí, dynamické počítadlo úkolů s českým skloňováním (`1 úkol`, `2–4 úkoly`, `5+ úkolů`), empty state oblasti (*„V této oblasti zatím nejsou žádné úkoly.“*), samostatný přehledný kontejner pro úkoly nezařazené do žádné oblasti (*„Bez oblasti“*), přepínač filtru úkolů **Aktivní** vs. **Archivované** (`/app/board/[boardId]` vs. `?filter=ARCHIVED`) a tlačítka `+ Přidat úkol`.
   - **Autorizace a bezpečnost:** Právo na vytvoření úkolu `canCreateTask` je odvozeno z `TaskPolicy` (povoleno pro `OWNER`, `MANAGER`, `MEMBER` i `ADMIN`). Use case `CreateTaskUseCase` v transakci `UnitOfWork` autoritativně kontroluje platnost a aktivní stav nástěnky, členství volajícího, a striktně vynucuje cross-board izolaci oblasti (`areaId`) i řešitele (`assigneeId`).
+- **Membership UI / Správa členů nástěnky (STEP 4):**
+  - **Zobrazení členů na Board Detail (`MembersSection`):** Přehledná sekce na stránce `/app/board/[boardId]` zobrazující souhrn členů podle rolí (`vlastník`, `správce`, `členové`), karty jednotlivých členů s vizuálními odznaky rolí (tmavý badge pro `Vlastník`, fialový badge pro `Správce`, šedý badge pro `Člen`), jménem, e-mailem a indikátorem `(Vy)` pro přihlášeného uživatele.
+  - **Přidání člena (`addMemberAction` & `AddMemberDialog`):** Modální dialog pro přidání existujícího aktivního uživatele do nástěnky. Využívá autorizovaný `GetAssignableUsersUseCase` pro výběr ze seznamu uživatelů, kteří dosud nejsou členy dané nástěnky (bez N+1 dotazů přes `userRepo.findActiveUsers()`). Volba role (`Člen` nebo `Správce` při splnění limitu max. 1 správce), validace vstupů přes `addMemberSchema`.
+  - **Změna role člena (`changeMemberRoleAction` & `ChangeRoleDialog`):** Modální dialog pro úpravu role mezi `MEMBER` a `MANAGER`. Oprávnění vyhrazeno pro vlastníka (`OWNER`) a administrátora (`ADMIN`). Striktně vynucuje limit max. 1 správce na nástěnku a zamezuje neautorizovanému povýšení na vlastníka či sesazení jediného vlastníka.
+  - **Odebrání člena (`removeMemberAction` & `RemoveMemberDialog`):** Potvrzovací dialog pro administrativní odebrání člena s výslovným upozorněním na kaskádové uvolnění úkolů (odstranění řešitele a zrušení účasti spoluřešitele). Striktně chrání jediného vlastníka (`CANNOT_REMOVE_SOLE_OWNER`).
+  - **Dobrovolný odchod z nástěnky (`leaveBoardAction` & `LeaveBoardDialog`):** Modální dialog pro dobrovolné opuštění nástěnky řadovým členem (`MEMBER`) nebo správcem (`MANAGER`). Kaskádově uvolňuje přiřazené úkoly a po úspěšném odchodu přesměruje uživatele na přehled `Moje nástěnky` (`/app`). Vlastník (`OWNER`) nemůže nástěnku opustit bez předchozího převodu vlastnictví.
+  - **Okamžitá synchronizace se seznamem nástěnek:** Jakmile je uživatel přidán jako člen, nástěnka se mu okamžitě zobrazí v `Moje nástěnky` (`/app`) díky zapojení `GetUserBoardsUseCase` do tabulky členství.
+  - **Autoritativní serverová autorizace:** Všechny akce správy členství probíhají přes Server Actions v `app/(authenticated)/app/board/[boardId]/member-actions.ts`, které ověřují ActorContext výhradně na serveru, spouští doménové use casy v transakci `UnitOfWork` s row-lockingem (`findByIdForUpdate`) a provádí revalidaci cache.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
 - **Databázové migrace:** 2 verzované Drizzle migrace (init schema + Better Auth persistence).
 
@@ -93,6 +101,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Bezpečné kaskádové smazání oblasti a souvisejících úkolů s potvrzením `SMAZAT`.
 - Task Display UI (`TaskCard`, zobrazení úkolů v oblastech i sekci Bez oblasti, počítadla úkolů).
 - Task Create UI (`CreateTaskDialog`, `createTaskAction`, výběr oblasti, řešitele, priority a termínu).
+- Membership UI (`MembersSection`, `AddMemberDialog`, `ChangeRoleDialog`, `RemoveMemberDialog`, `LeaveBoardDialog`).
+- Správa členů nástěnky (přidání člena, změna role MEMBER ↔ MANAGER s limitem max. 1 správce, odebrání člena s kaskádou úkolů, dobrovolný odchod s přesměrováním na /app).
+- Okamžitá synchronizace přehledu Moje nástěnky (`/app`) po přidání člena.
 - Filtrování úkolů na nástěnce (Aktivní vs. Archivované).
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
@@ -100,7 +111,6 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Task Lifecycle & Mutations (změna stavu/workflow úkolu, editace názvu a popisu).
 - Task Reassignment & Participants UI (změna řešitele, převzetí úkolu Take Over, připojení/odpojení spoluřešitelů Join/Leave/Remove).
 - Task Archive & Delete UI (archivace a kontrolované smazání úkolu s potvrzením `SMAZAT`).
-- Membership UI (přidávání/odebírání členů, správa rolí na nástěnce).
 - Personal ordering (osobní řazení úkolů per uživatel).
 - Real-time notifikace, e-mailové notifikace, outbox worker.
 
@@ -132,9 +142,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky, Oblasti a vytváření/zobrazení Úkolů jsou hotové (STEP 4/22, STEP 2 a STEP 3); navazující UI pro editaci úkolů, workflow statusů a správu členství zbývá implementovat v dalších krocích.
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky, Oblasti, vytváření/zobrazení Úkolů a Správu členství jsou hotové (STEP 4/22, STEP 2, STEP 3 a STEP 4); navazující UI pro editaci úkolů, workflow statusů a správu detailů úkolů zbývá implementovat v dalších krocích.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (582 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (622 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -143,6 +153,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 29. 9. 2026 | STEP 4 – Membership UI / Správa členů nástěnky (MembersSection, dialogy pro přidání, změnu role, odebrání a opuštění nástěnky, GetAssignableUsersUseCase, DTO, Server Actions, 40 nových testů, 622 celkem) |
 | 29. 9. 2026 | STEP 3 (Area & Task) – Task Create & Display UI (TaskCard, CreateTaskDialog, createTaskAction, propojení úkolů s oblastmi, úkoly Bez oblasti, filtry Aktivní/Archivované, cross-board ochrana, 33 nových testů, 582 celkem) |
 | 29. 9. 2026 | STEP 2 (Area & Task) – Area UI & Server Actions (AreaSection, AreaCard s placeholderem úkolů, dialogy vytvoření, úpravy a smazání s potvrzením SMAZAT, Server Actions, role-based viditelnost OWNER/MANAGER/ADMIN vs MEMBER, Button danger, 36 nových testů, 549 celkem) |
 | 29. 9. 2026 | STEP 1 (Area & Task) – Area & Task Query Layer (GetBoardAreasUseCase, GetBoardTasksUseCase, GetBoardMembersUseCase, batch repository metody UserRepository.findByIds a TaskParticipantRepository.findByTaskIds, DTO, obohacené BoardTaskView, filtrování, 32 nových testů, 513 celkem) |

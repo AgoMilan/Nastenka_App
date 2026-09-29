@@ -32,6 +32,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 1 (Area & Task) | Area & Task Query Layer (GetBoardAreasUseCase, GetBoardTasksUseCase, GetBoardMembersUseCase, batch metody UserRepository.findByIds a TaskParticipantRepository.findByTaskIds, DTO, obohacené BoardTaskView, filtrování ACTIVE/ARCHIVED/ALL, deterministické řazení, server authorization, cross-board izolace, 32 nových testů, 513 celkem) | DONE | 29. 9. 2026 |
 | STEP 2 (Area & Task) | Area UI & Server Actions (zobrazení oblastí na detailu nástěnky, responzivní grid, počet oblastí, empty state, CreateAreaDialog, EditAreaDialog, DeleteAreaDialog s potvrzením SMAZAT a kaskádou úkolů, createAreaAction, updateAreaAction, deleteAreaAction, role-based zobrazení pro OWNER/MANAGER/ADMIN vs MEMBER, Button danger, 36 nových testů, 549 celkem) | DONE | 29. 9. 2026 |
 | STEP 3 (Area & Task) | Task Create & Display UI (vytvoření úkolu přes createTaskAction a CreateTaskDialog, zobrazení úkolů v kartách oblastí a sekci Bez oblasti přes TaskCard, výběr oblasti a řešitele, priorita BĚŽNÁ/SPĚCHÁ, termín splnění s detekcí po termínu, přepínač filtrů Aktivní/Archivované, serverová autorizace a cross-board izolace, 33 nových testů, 582 celkem) | DONE | 29. 9. 2026 |
+| STEP 4 | Membership UI / Správa členů nástěnky (kompletní správa členů na detailu nástěnky, MembersSection, karty členů s rolemi Vlastník/Správce/Člen, přidání člena přes AddMemberDialog s výběrem z aktivních uživatelů přes GetAssignableUsersUseCase, změna role člena přes ChangeRoleDialog, odebrání člena s kaskádou úkolů přes RemoveMemberDialog, dobrovolný odchod přes LeaveBoardDialog s přesměrováním na /app, ochrana sole OWNERa a limitu správců, zobrazení v Moje nástěnky po přidání membershipu, 40 nových testů, 622 celkem) | DONE | 29. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -87,6 +88,27 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - V tomto kroku záměrně **NEJSOU implementovány**: mutace životního cyklu úkolu (změna stavu, editace názvu a popisu, změna řešitele, změna termínu/priority, převzetí úkolu, správa spoluřešitelů JOIN/LEAVE/REMOVE, archivace ani smazání úkolu `SMAZAT`), osobní řazení (personal ordering) ani Membership UI.
 - **Testy a Quality Gates:** 33 nových unit a integračních testů v `tests/unit/task-ui-actions.test.ts`, celkem 582/582 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 4 – Membership UI / Správa členů nástěnky (Dokončeno)
+- **Komponenty správy členů (Membership UI):**
+  - `MembersSection`: kontejner členů na stránce `/app/board/[boardId]`, zobrazení souhrnu rolí (`vlastník`, `správce`, `členové`), tlačítka `+ Přidat člena` (pro OWNER/MANAGER/ADMIN) a `Opustit nástěnku` (pro MEMBER/MANAGER).
+  - Karty členů: vizuální odznak role (`Vlastník` - tmavý, `Správce` - fialový, `Člen` - šedý), jméno, e-mail, indikátor `(Vy)` pro přihlášeného uživatele, kontextová akční tlačítka `Povýšit na Správce` / `Změnit na Člena` a `Odebrat`.
+  - `AddMemberDialog`: modální dialog s výběrem dostupných uživatelů (kteří dosud nejsou členy) načtených autorizovaným use casem `GetAssignableUsersUseCase`, výběr role (`Člen` nebo `Správce` při splnění limitu), validace a prevence duplicity.
+  - `ChangeRoleDialog`: modální dialog pro změnu role člena mezi `MEMBER` a `MANAGER` s kontrolou limitu max. 1 správce.
+  - `RemoveMemberDialog`: destruktivní potvrzovací dialog pro odebrání člena z nástěnky s varováním o uvolnění přiřazených úkolů.
+  - `LeaveBoardDialog`: modální dialog pro dobrovolný odchod přihlášeného člena (`MEMBER`/`MANAGER`) s přesměrováním do `Moje nástěnky` (`/app`).
+- **Server Actions & Use Cases:**
+  - `addMemberAction`: volá `AddMemberUseCase` v transakci `UnitOfWork` s row lockingem `findByIdForUpdate`.
+  - `changeMemberRoleAction`: volá `ChangeMemberRoleUseCase` (pouze OWNER a ADMIN).
+  - `removeMemberAction`: volá `RemoveMemberUseCase` s kaskádovým uvolněním úkolů (assignee = null, vymazání spoluřešitelů).
+  - `leaveBoardAction`: volá `LeaveBoardUseCase` s kaskádou úkolů a následným redirectem na `/app`.
+  - `GetAssignableUsersUseCase`: autorizované načtení aktivních uživatelů systému s vyloučením stávajících členů nástěnky bez N+1 dotazů (`userRepo.findActiveUsers()`).
+- **Autorizace a invarianty (Security & Invariants):**
+  - Ochrana sole OWNERa: zákaz odebrání (`CANNOT_REMOVE_SOLE_OWNER`), zákaz sesazení (`CANNOT_DEMOTE_SOLE_OWNER`), zákaz povýšení na OWNER přes ChangeRole (`OWNERSHIP_TRANSFER_REQUIRED`), zákaz opuštění nástěnky bez předchozího převodu vlastnictví.
+  - Invariant max. 1 MANAGER: zákaz přidání nebo povýšení druhého správce (`MANAGER_LIMIT_EXCEEDED`).
+  - Cross-board izolace: přísná kontrola příslušnosti členství k dané nástěnce.
+  - Okamžitá synchronizace Board Directory: uživatel po přidání členství ihned vidí nástěnku v `Moje nástěnky` (`/app`).
+- **Testy a Quality Gates:** 40 nových unit a integračních testů v `tests/unit/member-ui-actions.test.ts`, celkem 622/622 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -103,12 +125,14 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **STEP 4 (Area & Task) – Task Edit & Workflow UI:**
+1. **STEP 5 (Area & Task) – Task Edit & Workflow UI:**
    - Editace úkolu (název, popis), změna stavu (workflow přechody NOVÉ → PŘEVZATÉ → ROZPRACOVANÉ → ČEKÁ SE → HOTOVO), změna řešitele a spoluřešitelů (přiřazení, převzetí Take Over, připojení/odpojení spoluřešitele Join/Leave/Remove), změna termínu a priority, archivace a kontrolované smazání úkolu s potvrzením `SMAZAT`.
-2. **STEP 5 (Area & Task) – Personal Ordering:**
+2. **STEP 6 (Area & Task) – Personal Ordering:**
    - Osobní řazení úkolů na nástěnce per uživatel (oddělené od globálního zobrazení).
-3. **Membership UI:**
-   - Přidávání/odebírání členů, správa rolí na nástěnce.
+
+---
+
+# FUTURE – Budoucí rozvoj
 
 ---
 
