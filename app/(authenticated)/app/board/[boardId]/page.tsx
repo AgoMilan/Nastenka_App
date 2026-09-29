@@ -17,10 +17,15 @@ import {
   type TaskFilterMode,
 } from "@/modules/tasks/application/use-cases/get-board-tasks.use-case.ts";
 import { GetBoardMembersUseCase } from "@/modules/boards/application/use-cases/get-board-members.use-case.ts";
+import {
+  GetAssignableUsersUseCase,
+  type AssignableUserView,
+} from "@/modules/membership/index.ts";
 import { RoleBadge } from "@/components/boards/role-badge.tsx";
 import { BoardSwitcher } from "@/components/boards/board-switcher.tsx";
 import { LogoutButton } from "@/components/auth/logout-button.tsx";
 import { AreaSection } from "@/components/areas/area-section.tsx";
+import { MembersSection } from "@/components/members/members-section.tsx";
 
 interface BoardPageProps {
   params: Promise<{
@@ -122,6 +127,32 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
   const canCreateTask =
     actor.global_role === "ADMIN" || role !== null;
 
+  // Správa členů: OWNER, MANAGER, ADMIN
+  const canManageMembers =
+    actor.global_role === "ADMIN" || role === "OWNER" || role === "MANAGER";
+
+  // Změna rolí členů: pouze OWNER nebo ADMIN
+  const canChangeRoles =
+    actor.global_role === "ADMIN" || role === "OWNER";
+
+  // Možnost opustit nástěnku: MEMBER a MANAGER (nikoliv OWNER)
+  const canLeaveBoard =
+    role === "MEMBER" || role === "MANAGER";
+
+  // Načtení uživatelů, které lze do nástěnky přidat (pouze pro oprávněné role)
+  let assignableUsers: AssignableUserView[] = [];
+  if (canManageMembers) {
+    const getAssignableUsersUseCase = new GetAssignableUsersUseCase(
+      boardRepo,
+      membershipRepo,
+      userRepo,
+    );
+    const assignableResult = await getAssignableUsersUseCase.execute(actor, boardId);
+    if (assignableResult.success) {
+      assignableUsers = assignableResult.data;
+    }
+  }
+
   // Načtení pouze autorizovaných nástěnek aktuálního aktéra pro Switcher
   const getUserBoardsUseCase = new GetUserBoardsUseCase(boardRepo);
   const userBoardsResult = await getUserBoardsUseCase.execute(actor);
@@ -199,6 +230,22 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
                     : "Systémový administrátor"}
             </span>
           </div>
+        </div>
+
+        {/* Sekce členů Nástěnky */}
+        <div className="mb-8">
+          <MembersSection
+            boardId={board.id}
+            boardName={board.name}
+            members={members}
+            assignableUsers={assignableUsers}
+            currentUserId={actor.actor_user_id}
+            currentUserRole={role}
+            canManageMembers={canManageMembers}
+            canChangeRoles={canChangeRoles}
+            canLeaveBoard={canLeaveBoard}
+            isGlobalAdmin={actor.global_role === "ADMIN"}
+          />
         </div>
 
         {/* Sekce oblastí a úkolů Nástěnky */}

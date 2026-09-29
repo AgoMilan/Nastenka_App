@@ -18,4 +18,5 @@ export interface UserRecord {
 export interface UserRepository {
   findById(userId: string): Promise<UserRecord | null>;
   findByIds(userIds: string[]): Promise<UserRecord[]>;
+  findActiveUsers(): Promise<UserRecord[]>;
 }

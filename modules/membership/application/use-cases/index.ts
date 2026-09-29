@@ -25,3 +25,8 @@ export {
   type LeaveBoardInput,
   type LeaveBoardOutput,
 } from "./leave-board.use-case.ts";
+
+export {
+  GetAssignableUsersUseCase,
+  type AssignableUserView,
+} from "./get-assignable-users.use-case.ts";

@@ -244,6 +244,12 @@ class InMemoryUserRepository implements UserRepository {
     }
     return results;
   }
+
+  async findActiveUsers(): Promise<UserRecord[]> {
+    return Array.from(this.store.values()).filter(
+      (u) => u.isActive && u.deletedAt === null,
+    );
+  }
 }
 
 class InMemoryTaskRepository implements TaskRepository {
