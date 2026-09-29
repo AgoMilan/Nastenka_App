@@ -98,6 +98,12 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
     - Všichni členové nástěnky (`OWNER`, `MANAGER`, `MEMBER`) a `ADMIN` mohou upravovat název, popis, prioritu a řešitele.
     - Změnu oblasti (`TASK_CHANGE_AREA`) a termínu (`TASK_CHANGE_DUE_DATE`) smí provádět pouze `OWNER`, `MANAGER`, hlavní řešitel nebo spoluřešitel daného úkolu (`isTaskWorker`) a `ADMIN`. Pro řadového člena bez vazby na úkol jsou tato pole v dialogu deaktivována s vysvětlujícím popiskem a zachovávají původní hodnotu; backend use casy nezávisle vynucují `TaskPolicy` a odmítají neoprávněný zásah chybou `AuthorizationError (INSUFFICIENT_ROLE)`.
   - **Server Actions architektura:** `updateTaskAction` v `task-actions.ts` orchestrálně spouští příslušné doménové use casy (`UpdateTaskUseCase`, `ChangeTaskAssigneeUseCase`, `ChangeTaskAreaUseCase`, `ChangeTaskDueDateUseCase`, `ChangeTaskPriorityUseCase`) v transakci `UnitOfWork` pouze pro skutečně změněná pole a po úspěchu revaliduje cestu `/app/board/[boardId]`. K dispozici je také samostatná `changeTaskAssigneeAction`.
+- **Task Status Workflow, Take Over, Participants & Lifecycle UI (STEP 5B):**
+  - **Změna stavu úkolu (Status Workflow):** Interaktivní výběr stavu přímo na kartě úkolu (`TaskCard`) pro oprávněné uživatele (`OWNER`, `MANAGER`, řešitel, spoluřešitel a `ADMIN`). Výběr z aktivních stavů (`NOVÉ`, `PŘEVZATÉ`, `ROZPRACOVANÉ`, `ČEKÁ SE`, `HOTOVO`) prostřednictvím `changeTaskStatusAction` a `ChangeTaskStatusUseCase`. Automatické řízení atributu `completedAt` (nastavení časového razítka při přechodu do `HOTOVO`, vynulování při návratu do aktivního stavu).
+  - **Převzetí úkolu (Take Over):** Samostatná akce *„Převzít úkol“* na kartě úkolu umožňující kterémukoliv členu nástěnky nebo administrátorovi převzít řešení úkolu na sebe přes `takeOverTaskAction` a `TakeOverTaskUseCase`. Pokud byl uživatel dosud spoluřešitelem, je automaticky ze spoluřešitelů vyjmut. Akce je odlišná od administrativní změny řešitele třetí osobou.
+  - **Správa spoluřešitelů (Participants UI):** Zobrazení seznamu spoluřešitelů na kartě úkolu, tlačítko *„+ Připojit se“* (`joinTaskAction` / `JoinTaskAsParticipantUseCase`) pro dobrovolné zapojení člena (vyžaduje existenci hlavního řešitele, vylučuje duplicitu), tlačítko *„Opustit“* (`leaveTaskAction` / `LeaveTaskAsParticipantUseCase`) pro dobrovolné odpojení spoluřešitele a tlačítko `✕` (`removeTaskParticipantAction` / `RemoveTaskParticipantUseCase`) pro nucené odebrání spoluřešitele vyhrazené hlavnímu řešiteli, správci, vlastníkovi nebo administrátorovi.
+  - **Archivace úkolu (Archive Task):** Volba *„Archivovat úkol“* v kontextovém menu `⋯` na kartě úkolu s potvrzovacím dialogem přes `archiveTaskAction` a `ArchiveTaskUseCase`. Úkol přechází do stavu `ARCHIVOVÁNO`, mizí z aktivního přehledu a zobrazuje se ve filtru *„Archivované“*. Archivovaný úkol je striktně pouze pro čtení (read-only) – nelze dodatečně měnit jeho data, stav ani spoluřešitele; obnova z archivu (restore/unarchive) není podle schválených architektonických zásad podporována.
+  - **Řízené definitivní smazání úkolu (Delete Task):** Volba *„Smazat úkol“* v kontextovém menu `⋯` otevírající destruktivní modální dialog `DeleteTaskDialog`. Smazání představuje nevratný hard-delete a vyžaduje bezpečnostní ruční vepsání přesného potvrzovacího textu `SMAZAT` (validováno Zodem, Server Action `deleteTaskAction` i `DeleteTaskUseCase`). Kaskádově odstraňuje všechny vazby na spoluřešitele. Oprávnění náleží řešiteli, spoluřešiteli, správci, vlastníkovi a administrátorovi.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
 - **Databázové migrace:** 2 verzované Drizzle migrace (init schema + Better Auth persistence).
 
@@ -125,6 +131,11 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Změna priority úkolu (`BĚŽNÁ` vs. `SPĚCHÁ`).
 - Přiřazení a odebrání řešitele úkolu (výběr ze členů nástěnky nebo *„Nepřiřazeno“* s kaskádovým uvolněním spoluřešitelů).
 - Ochrana polí podle rolí (oblast a termín povoleny pouze pro OWNER, MANAGER, řešitele a spoluřešitele úkolu).
+- Task Status & Workflow UI (změna stavu na NOVÉ, PŘEVZATÉ, ROZPRACOVANÉ, ČEKÁ SE, HOTOVO s řízením completedAt).
+- Převzetí úkolu členem týmu (*„Převzít úkol“* na sebe s automatickým vyjmutím ze spoluřešitelů).
+- Správa spoluřešitelů na kartě úkolu (dobrovolné připojení, dobrovolné odpojení, nucené odebrání řešitelem a vedením).
+- Archivace úkolu do stavu ARCHIVOVÁNO a zobrazení v přehledu archivovaných úkolů (read-only režim).
+- Řízené trvalé smazání úkolu (hard-delete s explicitním bezpečnostním potvrzením `SMAZAT` a kaskádou spoluřešitelů).
 - Membership UI (`MembersSection`, `AddMemberDialog`, `ChangeRoleDialog`, `RemoveMemberDialog`, `LeaveBoardDialog`).
 - Správa členů nástěnky (přidání člena, změna role MEMBER ↔ MANAGER s limitem max. 1 správce, odebrání člena s kaskádou úkolů, dobrovolný odchod s přesměrováním na /app).
 - Okamžitá synchronizace přehledu Moje nástěnky (`/app`) po přidání člena.
@@ -132,10 +143,6 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
 ### Co ještě není implementováno
-- Task Status & Workflow UI (přechody stavů úkolu NOVÉ → PŘEVZATÉ → ROZPRACOVANÉ → ČEKÁ SE → HOTOVO).
-- Task Take Over UI (`TakeOverTaskUseCase` – samostatné převzetí úkolu členem).
-- Task Participants UI (připojení jako spoluřešitel Join, odpojení Leave, odebrání spoluřešitele Remove).
-- Task Archive & Delete UI (archivace a kontrolované smazání úkolu s potvrzením `SMAZAT`).
 - Personal ordering (osobní řazení úkolů per uživatel).
 - Real-time notifikace, e-mailové notifikace, outbox worker.
 
@@ -167,9 +174,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů a Správu členství jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A a Board Edit); navazující UI pro workflow statusů, spoluřešitele a správu životního cyklu úkolů zbývá implementovat v dalších krocích.
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání a Správu členství jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B a Board Edit); navazující UI pro osobní řazení úkolů zbývá implementovat v dalším kroku.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (696 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (726 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -178,6 +185,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 29. 9. 2026 | STEP 5B – Task Status Workflow, Take Over, Participants & Lifecycle UI (TaskCard výběr stavů s completedAt, převzetí úkolu takeOverTaskAction na sebe s vyjmutím ze spoluřešitelů, správa spoluřešitelů připojit se / opustit / odebrat, kontextové menu ⋯ pro archivaci a řízený hard-delete s textem SMAZAT přes DeleteTaskDialog, read-only ochrana archivu, 30 nových testů, 726 celkem) |
 | 29. 9. 2026 | Board Edit – Úprava metadat nástěnky (EditBoardDialog, EditBoardButton, updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository.update, autorizace BOARD_EDIT pro OWNER/MANAGER/ADMIN, ochrana created_by, revalidace detailu i přehledu /app, 32 nových testů, 696 celkem) |
 | 29. 9. 2026 | STEP 5A – Task Edit & Assignee UI (EditTaskDialog, updateTaskAction, changeTaskAssigneeAction, editace údajů úkolu, přiřazení a odebrání řešitele, kaskáda spoluřešitelů, 42 nových testů, 664 celkem) |
 | 29. 9. 2026 | STEP 4 – Membership UI / Správa členů nástěnky (MembersSection, dialogy pro přidání, změnu role, odebrání a opuštění nástěnky, GetAssignableUsersUseCase, DTO, Server Actions, 40 nových testů, 622 celkem) |

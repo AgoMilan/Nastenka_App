@@ -35,6 +35,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 4 | Membership UI / Správa členů nástěnky (kompletní správa členů na detailu nástěnky, MembersSection, karty členů s rolemi Vlastník/Správce/Člen, přidání člena přes AddMemberDialog s výběrem z aktivních uživatelů přes GetAssignableUsersUseCase, změna role člena přes ChangeRoleDialog, odebrání člena s kaskádou úkolů přes RemoveMemberDialog, dobrovolný odchod přes LeaveBoardDialog s přesměrováním na /app, ochrana sole OWNERa a limitu správců, zobrazení v Moje nástěnky po přidání membershipu, 40 nových testů, 622 celkem) | DONE | 29. 9. 2026 |
 | STEP 5A | Task Edit & Assignee UI (editace základních údajů úkolu na detailu nástěnky přes EditTaskDialog, tlačítko ✏️ na TaskCard, editace názvu, popisu, změna oblasti na existující i Bez oblasti, změna termínu splnění, změna priority BĚŽNÁ/SPĚCHÁ, přiřazení aktivního člena a odebrání řešitele na Nepřiřazeno, kaskáda uvolnění spoluřešitelů při zrušení řešitele, serverová autorizace dle TaskPolicy, cross-board ochrana, 42 nových testů, 664 celkem) | DONE | 29. 9. 2026 |
 | Board Edit | Board Edit UI & Use Case (úprava metadat nástěnky – název a popis přes EditBoardDialog a updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository o update, autorizace přes BoardPolicy BOARD_EDIT pro OWNER, MANAGER, ADMIN, ochrana boards.created_by, revalidace detailu i /app, 32 nových testů, 696 celkem) | DONE | 29. 9. 2026 |
+| STEP 5B | Task Status Workflow, Take Over, Participants & Lifecycle UI (výběr stavů úkolu NOVÉ / PŘEVZATÉ / ROZPRACOVANÉ / ČEKÁ SE / HOTOVO s automatickým completedAt, převzetí úkolu přes takeOverTaskAction a TakeOverTaskUseCase s vyčištěním ze spoluřešitelů, správa spoluřešitelů – připojení joinTaskAction, odpojení leaveTaskAction a odebrání removeTaskParticipantAction pro řešitele a správu, kontextové menu ⋯ pro archivaci archiveTaskAction a trvalé smazání deleteTaskAction s modálním potvrzením přes přesný text SMAZAT přes DeleteTaskDialog, ochrana read-only pro archivované úkoly dle architektonických pravidel, 30 nových testů, 726 celkem) | DONE | 29. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -144,6 +145,29 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Aktuální vlastník je určován výhradně z `memberships.role = 'OWNER'`, nikoliv z `boards.created_by`.
 - **Testy a Quality Gates:** 32 nových unit testů v `tests/unit/board-edit.test.ts`, celkem 696/696 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 5B – Task Status Workflow, Take Over, Participants & Lifecycle UI (Dokončeno)
+- **Workflow stavů úkolu (Status Workflow UI):**
+  - Interaktivní výběr stavu přímo na kartě úkolu (`TaskCard`) pro oprávněné uživatele (`OWNER`, `MANAGER`, řešitel, spoluřešitel a `ADMIN`).
+  - Podpora přechodů mezi aktivními stavy (`NOVÉ`, `PŘEVZATÉ`, `ROZPRACOVANÉ`, `ČEKÁ SE`, `HOTOVO`) prostřednictvím `changeTaskStatusAction` a `ChangeTaskStatusUseCase`.
+  - Automatické řízení `completedAt` (nastavení času dokončení při přechodu do `HOTOVO`, vynulování při návratu do aktivního stavu).
+- **Převzetí úkolu (Take Over UI):**
+  - Tlačítko *„Převzít úkol“* na kartě úkolu pro kteréhokoliv aktivního člena nástěnky nebo administrátora přes `takeOverTaskAction` a `TakeOverTaskUseCase`.
+  - Pokud byl přebírající uživatel dosud spoluřešitelem, je automaticky ze spoluřešitelů vyjmut.
+- **Správa spoluřešitelů (Participants UI):**
+  - Zobrazení seznamu spoluřešitelů s čipy jmen na kartě úkolu.
+  - Tlačítko *„+ Připojit se“* (`joinTaskAction` / `JoinTaskAsParticipantUseCase`) pro dobrovolné zapojení člena (vyžaduje existenci hlavního řešitele).
+  - Tlačítko *„Opustit“* (`leaveTaskAction` / `LeaveTaskAsParticipantUseCase`) pro dobrovolné odpojení spoluřešitele od úkolu.
+  - Tlačítko `✕` (`removeTaskParticipantAction` / `RemoveTaskParticipantUseCase`) u každého spoluřešitele pro nucené odebrání řešitelem, správcem, vlastníkem nebo administrátorem.
+- **Archivace úkolu (Archive Task UI):**
+  - Volba *„Archivovat úkol“* v kontextovém menu `⋯` na kartě úkolu s potvrzovacím dialogem přes `archiveTaskAction` a `ArchiveTaskUseCase`.
+  - Přesun úkolu do stavu `ARCHIVOVÁNO` a zobrazení ve filtru *„Archivované“*.
+  - Striktní read-only ochrana: archivovaný úkol nelze editovat, měnit jeho stav ani upravovat spoluřešitele; obnova z archivu (restore/unarchive) není podle schválených architektonických pravidel podporována.
+- **Řízené definitivní smazání úkolu (Delete Task UI):**
+  - Volba *„Smazat úkol“* v kontextovém menu `⋯` otevírající destruktivní modální dialog `DeleteTaskDialog`.
+  - Nevratný hard-delete vyžadující přesné bezpečnostní potvrzení vepsáním textu `SMAZAT` (validováno Zodem, Server Action `deleteTaskAction` i `DeleteTaskUseCase`).
+  - Kaskádové odstranění všech vazeb na spoluřešitele v `task_participants`.
+- **Testy a Quality Gates:** 30 nových unit testů v `tests/unit/task-lifecycle-actions.test.ts`, celkem 726/726 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -160,14 +184,8 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **STEP 5B (Area & Task) – Task Status Workflow, Take Over, Participants & Lifecycle UI:**
-   - Změna stavu (workflow přechody NOVÉ → PŘEVZATÉ → ROZPRACOVANÉ → ČEKÁ SE → HOTOVO), převzetí úkolu (Take Over), správa spoluřešitelů (připojení Join as participant, odpojení Leave, odebrání Remove), archivace úkolu a kontrolované smazání úkolu s potvrzením `SMAZAT`.
-2. **STEP 6 (Area & Task) – Personal Ordering:**
+1. **STEP 6 (Area & Task) – Personal Ordering:**
    - Osobní řazení úkolů na nástěnce per uživatel (oddělené od globálního zobrazení).
-
----
-
-# FUTURE – Budoucí rozvoj
 
 ---
 
