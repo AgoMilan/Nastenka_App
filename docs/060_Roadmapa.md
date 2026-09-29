@@ -34,6 +34,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 3 (Area & Task) | Task Create & Display UI (vytvoření úkolu přes createTaskAction a CreateTaskDialog, zobrazení úkolů v kartách oblastí a sekci Bez oblasti přes TaskCard, výběr oblasti a řešitele, priorita BĚŽNÁ/SPĚCHÁ, termín splnění s detekcí po termínu, přepínač filtrů Aktivní/Archivované, serverová autorizace a cross-board izolace, 33 nových testů, 582 celkem) | DONE | 29. 9. 2026 |
 | STEP 4 | Membership UI / Správa členů nástěnky (kompletní správa členů na detailu nástěnky, MembersSection, karty členů s rolemi Vlastník/Správce/Člen, přidání člena přes AddMemberDialog s výběrem z aktivních uživatelů přes GetAssignableUsersUseCase, změna role člena přes ChangeRoleDialog, odebrání člena s kaskádou úkolů přes RemoveMemberDialog, dobrovolný odchod přes LeaveBoardDialog s přesměrováním na /app, ochrana sole OWNERa a limitu správců, zobrazení v Moje nástěnky po přidání membershipu, 40 nových testů, 622 celkem) | DONE | 29. 9. 2026 |
 | STEP 5A | Task Edit & Assignee UI (editace základních údajů úkolu na detailu nástěnky přes EditTaskDialog, tlačítko ✏️ na TaskCard, editace názvu, popisu, změna oblasti na existující i Bez oblasti, změna termínu splnění, změna priority BĚŽNÁ/SPĚCHÁ, přiřazení aktivního člena a odebrání řešitele na Nepřiřazeno, kaskáda uvolnění spoluřešitelů při zrušení řešitele, serverová autorizace dle TaskPolicy, cross-board ochrana, 42 nových testů, 664 celkem) | DONE | 29. 9. 2026 |
+| Board Edit | Board Edit UI & Use Case (úprava metadat nástěnky – název a popis přes EditBoardDialog a updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository o update, autorizace přes BoardPolicy BOARD_EDIT pro OWNER, MANAGER, ADMIN, ochrana boards.created_by, revalidace detailu i /app, 32 nových testů, 696 celkem) | DONE | 29. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -129,6 +130,19 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 - **Důležité vymezení rozsahu:**
   - V tomto kroku záměrně **NEJSOU implementovány**: převzetí úkolu (`TakeOverTaskUseCase`), změna stavu a workflow, spoluřešitelé (připojení/odpojení spoluřešitele), archivace, mazání úkolu, osobní řazení (personal ordering), drag & drop, notifikace ani komentáře.
 - **Testy a Quality Gates:** 42 nových unit testů v `tests/unit/task-edit-actions.test.ts`, celkem 664/664 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
+#### Board Edit – Úprava metadat nástěnky (Dokončeno)
+- **Komponenty editace nástěnky (Board Edit UI):**
+  - Tlačítko `✏️ Upravit nástěnku` (`EditBoardButton`) v hlavičce detailu nástěnky (`/app/board/[boardId]`) zobrazené pro oprávněné role (`canEditBoard = isGlobalAdmin || role === "OWNER" || role === "MANAGER"`). Pro řadové členy (`MEMBER`) a nečleny je tlačítko skryté.
+  - `EditBoardDialog`: modální formulář s React 19 `useActionState`, auto-focusem, předvyplněným aktuálním názvem a popisem nástěnky, klientskou i serverovou validací (název 1–255 znaků s trimem, volitelný popis max. 1000 znaků), zavřením na klávesu Escape a pending indikátorem.
+- **Server Actions & Use Cases:**
+  - `updateBoardAction` v `app/(authenticated)/app/board/[boardId]/board-actions.ts`: autoritativní serverový `ActorContext` ze session, validace přes `updateBoardSchema`, delegace na `UpdateBoardUseCase`.
+  - `UpdateBoardUseCase`: autorizace přes `BoardPolicy` (`BOARD_EDIT`), kontrola existence a soft-delete stavu (`BOARD_DELETED`), aktualizace přes `BoardRepository.update()`.
+  - Revalidace cache: automatická revalidace detailu `/app/board/[boardId]` i přehledu `/app` (Moje nástěnky).
+- **Architektonická integrita a bezpečnost:**
+  - `boards.created_by` se nikdy nemění (neměnný auditní údaj).
+  - Aktuální vlastník je určován výhradně z `memberships.role = 'OWNER'`, nikoliv z `boards.created_by`.
+- **Testy a Quality Gates:** 32 nových unit testů v `tests/unit/board-edit.test.ts`, celkem 696/696 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
 ---
 

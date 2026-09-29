@@ -49,6 +49,12 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Board Detail (`/app/board/[boardId]`):** Základní kontejner pracovní plochy Nástěnky chráněný přes `GetBoardDetailUseCase`. Nečlen, neexistující nebo logicky smazaná Nástěnka končí striktně voláním `notFound()`. Zobrazuje název, roli a navigaci zpět na přehled.
   - **Board Switcher (`BoardSwitcher`):** Kontextový přepínač Nástěnek v hlavičce detailu umožňující rychlý přechod na jinou dostupnou Nástěnku nebo návrat na přehled. Využívá výhradně autorizovaný seznam nástěnek přihlášeného uživatele.
   - **Board Query vrstva:** Metody `findActiveBoardsForUser()` a `findActiveBoardsForAdmin()` v `BoardRepository` a use case `GetUserBoardsUseCase` striktně filtrující soft-deleted záznamy (`deleted_at IS NULL`) a respektující membership scoping.
+- **Board Edit UI & Server Action (Úprava metadat nástěnky):**
+  - **Editace z detailu nástěnky (`EditBoardButton` & `EditBoardDialog`):** Tlačítko `✏️ Upravit nástěnku` v hlavičce detailu `/app/board/[boardId]` otevírá modální formulář s React 19 `useActionState` pro úpravu názvu a popisu.
+  - **Validace a normalizace:** Zod schéma `updateBoardSchema` ověřuje povinný název (1–255 znaků po trimu) a volitelný popis (max. 1000 znaků). Prázdný popis je normalizován na `null`.
+  - **Autorizace přes BoardPolicy (`BOARD_EDIT`):** Povoleno pro `OWNER`, `MANAGER` a `ADMIN`. Členové s rolí `MEMBER` a nečlenové mají editaci zakázánu (`INSUFFICIENT_ROLE` / `NOT_A_MEMBER`).
+  - **Architektonická ochrana vlastnictví a historie:** `boards.created_by` se nikdy nemění (neměnný auditní údaj). Vlastník se určuje výhradně z `memberships.role = 'OWNER'`.
+  - **Server Action & Revalidace:** `updateBoardAction` v `app/(authenticated)/app/board/[boardId]/board-actions.ts` získává autoritativní `ActorContext` ze serverové session, spouští `UpdateBoardUseCase`, aktualizuje záznam přes `BoardRepository.update()` a automaticky revaliduje jak detail `/app/board/[boardId]`, tak přehled `Moje nástěnky` (`/app`).
 - **Area & Task Query vrstva (STEP 1):**
   - `GetBoardAreasUseCase`: autorizované načtení oblastí nástěnky seřazených deterministicky podle názvu, kontrola členství a soft-delete stavu.
   - `GetBoardTasksUseCase`: autorizované načtení úkolů nástěnky s filtrováním (`ACTIVE`, `ARCHIVED`, `ALL`) a obohaceným `BoardTaskView` DTO (název oblasti, jméno autora, jméno a e-mail řešitele, seznam spoluřešitelů s id/jménem/e-mailem).
@@ -104,6 +110,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Vytvoření nástěnky (`createBoardAction`) – autorizované vytvoření s rolí OWNER.
 - Board Detail (`/app/board/[boardId]`) – bezpečný kontejner s `notFound()` ochranou.
 - Board Switcher (`BoardSwitcher`) – přepínač mezi dostupnými nástěnkami.
+- Editace metadat nástěnky (`updateBoardAction`, `EditBoardDialog`, `EditBoardButton`, `UpdateBoardUseCase`, změna názvu a popisu pro OWNER, MANAGER a ADMIN).
 - Area Query vrstva (`GetBoardAreasUseCase`) – autorizované načtení oblastí nástěnky.
 - Task Query vrstva (`GetBoardTasksUseCase`) – autorizované načtení úkolů s obohacením a filtrováním.
 - Member Query vrstva (`GetBoardMembersUseCase`) – autorizované načtení členů nástěnky.
@@ -160,9 +167,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky, Oblasti, vytváření/zobrazení/editaci Úkolů a Správu členství jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4 a STEP 5A); navazující UI pro workflow statusů, spoluřešitele a správu životního cyklu úkolů zbývá implementovat v dalších krocích.
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů a Správu členství jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A a Board Edit); navazující UI pro workflow statusů, spoluřešitele a správu životního cyklu úkolů zbývá implementovat v dalších krocích.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (664 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (696 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -171,6 +178,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 29. 9. 2026 | Board Edit – Úprava metadat nástěnky (EditBoardDialog, EditBoardButton, updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository.update, autorizace BOARD_EDIT pro OWNER/MANAGER/ADMIN, ochrana created_by, revalidace detailu i přehledu /app, 32 nových testů, 696 celkem) |
 | 29. 9. 2026 | STEP 5A – Task Edit & Assignee UI (EditTaskDialog, updateTaskAction, changeTaskAssigneeAction, editace údajů úkolu, přiřazení a odebrání řešitele, kaskáda spoluřešitelů, 42 nových testů, 664 celkem) |
 | 29. 9. 2026 | STEP 4 – Membership UI / Správa členů nástěnky (MembersSection, dialogy pro přidání, změnu role, odebrání a opuštění nástěnky, GetAssignableUsersUseCase, DTO, Server Actions, 40 nových testů, 622 celkem) |
 | 29. 9. 2026 | STEP 3 (Area & Task) – Task Create & Display UI (TaskCard, CreateTaskDialog, createTaskAction, propojení úkolů s oblastmi, úkoly Bez oblasti, filtry Aktivní/Archivované, cross-board ochrana, 33 nových testů, 582 celkem) |
