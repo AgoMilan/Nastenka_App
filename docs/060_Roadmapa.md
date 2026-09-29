@@ -33,6 +33,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 2 (Area & Task) | Area UI & Server Actions (zobrazení oblastí na detailu nástěnky, responzivní grid, počet oblastí, empty state, CreateAreaDialog, EditAreaDialog, DeleteAreaDialog s potvrzením SMAZAT a kaskádou úkolů, createAreaAction, updateAreaAction, deleteAreaAction, role-based zobrazení pro OWNER/MANAGER/ADMIN vs MEMBER, Button danger, 36 nových testů, 549 celkem) | DONE | 29. 9. 2026 |
 | STEP 3 (Area & Task) | Task Create & Display UI (vytvoření úkolu přes createTaskAction a CreateTaskDialog, zobrazení úkolů v kartách oblastí a sekci Bez oblasti přes TaskCard, výběr oblasti a řešitele, priorita BĚŽNÁ/SPĚCHÁ, termín splnění s detekcí po termínu, přepínač filtrů Aktivní/Archivované, serverová autorizace a cross-board izolace, 33 nových testů, 582 celkem) | DONE | 29. 9. 2026 |
 | STEP 4 | Membership UI / Správa členů nástěnky (kompletní správa členů na detailu nástěnky, MembersSection, karty členů s rolemi Vlastník/Správce/Člen, přidání člena přes AddMemberDialog s výběrem z aktivních uživatelů přes GetAssignableUsersUseCase, změna role člena přes ChangeRoleDialog, odebrání člena s kaskádou úkolů přes RemoveMemberDialog, dobrovolný odchod přes LeaveBoardDialog s přesměrováním na /app, ochrana sole OWNERa a limitu správců, zobrazení v Moje nástěnky po přidání membershipu, 40 nových testů, 622 celkem) | DONE | 29. 9. 2026 |
+| STEP 5A | Task Edit & Assignee UI (editace základních údajů úkolu na detailu nástěnky přes EditTaskDialog, tlačítko ✏️ na TaskCard, editace názvu, popisu, změna oblasti na existující i Bez oblasti, změna termínu splnění, změna priority BĚŽNÁ/SPĚCHÁ, přiřazení aktivního člena a odebrání řešitele na Nepřiřazeno, kaskáda uvolnění spoluřešitelů při zrušení řešitele, serverová autorizace dle TaskPolicy, cross-board ochrana, 42 nových testů, 664 celkem) | DONE | 29. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -109,6 +110,26 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Okamžitá synchronizace Board Directory: uživatel po přidání členství ihned vidí nástěnku v `Moje nástěnky` (`/app`).
 - **Testy a Quality Gates:** 40 nových unit a integračních testů v `tests/unit/member-ui-actions.test.ts`, celkem 622/622 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 5A – Task Edit & Assignee UI (Dokončeno)
+- **Komponenty editace úkolu (Task Edit UI):**
+  - Tlačítko `✏️` na `TaskCard` pro oprávněné uživatele (všichni aktivní členové nástěnky a administrátor).
+  - `EditTaskDialog`: modální dialog s React 19 `useActionState`, auto-focusem, validací povinného názvu (1–255 znaků), popisu (max. 10 000 znaků), výběrem oblasti (včetně volby bez oblasti), výběrem řešitele ze seznamu členů nástěnky (s možností Nepřiřazeno), volbou priority (`BĚŽNÁ` / `SPĚCHÁ`) a termínu splnění (`type="date"`).
+  - Rozlišení oprávnění pro editaci jednotlivých polí v UI dle `TaskPolicy`:
+    - Název, popis, priorita a přiřazení řešitele jsou povoleny všem členům.
+    - Změna oblasti a termínu je povolena Řešiteli, Spoluřešiteli, Správci, Vlastníkovi a Administrátorovi. Pokud uživatel tato práva nemá, pole jsou v UI uzamčena (disabled s vysvětlujícím textem) a odesílá se nezměněná hodnota.
+  - Ochrana proti vícenásobnému odeslání během `isPending` a zachování zadaných údajů při chybě.
+- **Server Actions & Use Cases:**
+  - `updateTaskAction` v `app/(authenticated)/app/board/[boardId]/task-actions.ts`: autoritativní serverový ActorContext, validace přes `editTaskSchema`, kontrola existence úkolu a cross-board příslušnosti k nástěnce. Změněná pole deleguje na příslušné doménové use casy: `UpdateTaskUseCase` (název, popis), `ChangeTaskAssigneeUseCase` (řešitel), `ChangeTaskAreaUseCase` (oblast), `ChangeTaskDueDateUseCase` (termín), `ChangeTaskPriorityUseCase` (priorita). Po úspěchu provádí `revalidatePath`.
+  - `changeTaskAssigneeAction`: samostatná Server Action pro přiřazení/odebrání řešitele přes `ChangeTaskAssigneeUseCase`.
+  - Invarianty řešitele: při odebrání řešitele (`assigneeId = null`) se automaticky odstraní všichni spoluřešitelé; pokud byl nový řešitel dosud spoluřešitelem, je ze spoluřešitelů vyjmut.
+- **Bezpečnostní hranice a cross-board izolace:**
+  - Cílová oblast musí patřit do stejné nástěnky (`CROSS_BOARD_ACCESS`).
+  - Cílový řešitel musí být aktivním členem stejné nástěnky (`CROSS_BOARD_ACCESS`).
+  - Zákaz přístupu k neexistujícím, neautorizovaným nebo smazaným nástěnkám (`BOARD_DELETED`).
+- **Důležité vymezení rozsahu:**
+  - V tomto kroku záměrně **NEJSOU implementovány**: převzetí úkolu (`TakeOverTaskUseCase`), změna stavu a workflow, spoluřešitelé (připojení/odpojení spoluřešitele), archivace, mazání úkolu, osobní řazení (personal ordering), drag & drop, notifikace ani komentáře.
+- **Testy a Quality Gates:** 42 nových unit testů v `tests/unit/task-edit-actions.test.ts`, celkem 664/664 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -125,8 +146,8 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **STEP 5 (Area & Task) – Task Edit & Workflow UI:**
-   - Editace úkolu (název, popis), změna stavu (workflow přechody NOVÉ → PŘEVZATÉ → ROZPRACOVANÉ → ČEKÁ SE → HOTOVO), změna řešitele a spoluřešitelů (přiřazení, převzetí Take Over, připojení/odpojení spoluřešitele Join/Leave/Remove), změna termínu a priority, archivace a kontrolované smazání úkolu s potvrzením `SMAZAT`.
+1. **STEP 5B (Area & Task) – Task Status Workflow, Take Over, Participants & Lifecycle UI:**
+   - Změna stavu (workflow přechody NOVÉ → PŘEVZATÉ → ROZPRACOVANÉ → ČEKÁ SE → HOTOVO), převzetí úkolu (Take Over), správa spoluřešitelů (připojení Join as participant, odpojení Leave, odebrání Remove), archivace úkolu a kontrolované smazání úkolu s potvrzením `SMAZAT`.
 2. **STEP 6 (Area & Task) – Personal Ordering:**
    - Osobní řazení úkolů na nástěnce per uživatel (oddělené od globálního zobrazení).
 
