@@ -39,6 +39,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 6 (Area & Task) | Personal Ordering (osobní řazení úkolů per uživatel, nová tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a HTML5 Drag & Drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) | DONE | 30. 9. 2026 |
 | STEP 7 | Osobní pracovní prostor „Moje úkoly“ (/app/my-work agregace úkolů napříč aktivními nástěnkami uživatele kde je ASSIGNEE nebo PARTICIPANT, vyloučení pouhého created_by, precedence ASSIGNEE, filtry stavů s vyčleněním HOTOVO z ACTIVE, filtry rolí ALL/ASSIGNEE/PARTICIPANT, seskupení dle nástěnek s počítadlem a proklikem, zachování osobního řazení v rámci nástěnek, AppHeader navigace, GetMyTasksUseCase, findUserTasksAcrossBoards, 21 nových testů, 766 celkem) | DONE | 30. 9. 2026 |
 | STEP 8 | Komentáře a diskuze k úkolům (uživatelská diskuze u úkolů, tabulka task_comments, TaskCommentRepository a transakční UnitOfWork, author-only editace a mazání bez výjimek i pro ADMIN/OWNER/MANAGER, striktní read-only režim pro archivované úkoly, kaskádový delete při smazání úkolu, dávkový countByTaskIds, TaskCommentsDialog, počítadlo komentářů na TaskCard a MyTaskCard, 26 nových testů, 792 celkem) | DONE | 30. 9. 2026 |
+| Fix Auth Form | Bezpečnostní oprava auth formulářů (explicitní method="post" v LoginForm a RegisterForm proti úniku přihlašovacích údajů přes nativní GET fallback při výpadku/zpoždění React hydratace, zachování Better Auth toku, 14 nových testů, 806 celkem) | DONE | 30. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -262,6 +263,12 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Tlačítko na `TaskCard` s dynamickým počítadlem komentářů (`💬 X komentářů`).
   - Odznak s počtem komentářů na kartě úkolu v osobním přehledu `MyTaskCard`.
 - **Testy a Quality Gates:** 26 nových unit testů v `tests/unit/task-comments.test.ts`, celkem 792/792 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
+#### Bezpečnostní oprava auth formulářů (Dokončeno)
+- **Ochrana proti GET úniku přihlašovacích údajů:** Formuláře `LoginForm` a `RegisterForm` explicitně definují atribut `method="post"`. Tím se spolehlivě eliminuje implicitní HTML GET fallback při absenci či zpoždění React hydratace, takže heslo ani jiné citlivé údaje nemohou uniknout do URL parametrů.
+- **Zachování autentizačního toku:** Vlastní přihlašování a registrace nadále využívají klientského Better Auth klienta (`authClient.signIn.email`, `authClient.signUp.email`) s `e.preventDefault()`.
+- **Vymezení rozsahu:** Povolení síťového originu pro LAN přístup (`allowedDevOrigins` v Next.js a `trustedOrigins` v Better Auth) není součástí této opravy a je řešeno v navazujícím kroku.
+- **Testy a Quality Gates:** 14 nových unit testů v `tests/unit/auth-form-security.test.ts`, celkem 806/806 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
 ---
 
