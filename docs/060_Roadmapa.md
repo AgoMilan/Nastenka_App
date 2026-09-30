@@ -40,6 +40,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 7 | Osobní pracovní prostor „Moje úkoly“ (/app/my-work agregace úkolů napříč aktivními nástěnkami uživatele kde je ASSIGNEE nebo PARTICIPANT, vyloučení pouhého created_by, precedence ASSIGNEE, filtry stavů s vyčleněním HOTOVO z ACTIVE, filtry rolí ALL/ASSIGNEE/PARTICIPANT, seskupení dle nástěnek s počítadlem a proklikem, zachování osobního řazení v rámci nástěnek, AppHeader navigace, GetMyTasksUseCase, findUserTasksAcrossBoards, 21 nových testů, 766 celkem) | DONE | 30. 9. 2026 |
 | STEP 8 | Komentáře a diskuze k úkolům (uživatelská diskuze u úkolů, tabulka task_comments, TaskCommentRepository a transakční UnitOfWork, author-only editace a mazání bez výjimek i pro ADMIN/OWNER/MANAGER, striktní read-only režim pro archivované úkoly, kaskádový delete při smazání úkolu, dávkový countByTaskIds, TaskCommentsDialog, počítadlo komentářů na TaskCard a MyTaskCard, 26 nových testů, 792 celkem) | DONE | 30. 9. 2026 |
 | Fix Auth Form | Bezpečnostní oprava auth formulářů (explicitní method="post" v LoginForm a RegisterForm proti úniku přihlašovacích údajů přes nativní GET fallback při výpadku/zpoždění React hydratace, zachování Better Auth toku, 14 nových testů, 806 celkem) | DONE | 30. 9. 2026 |
+| LAN Dev Auth | Povolení autentizace ze síťové adresy v developmentu (Next.js allowedDevOrigins pro 192.168.0.53 a HMR, Better Auth trustedOrigins přes resolveTrustedOrigins a BETTER_AUTH_TRUSTED_ORIGINS, zachování CSRF ochrany, 2 nové testy, 808 celkem) | DONE | 30. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -269,6 +270,13 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 - **Zachování autentizačního toku:** Vlastní přihlašování a registrace nadále využívají klientského Better Auth klienta (`authClient.signIn.email`, `authClient.signUp.email`) s `e.preventDefault()`.
 - **Vymezení rozsahu:** Povolení síťového originu pro LAN přístup (`allowedDevOrigins` v Next.js a `trustedOrigins` v Better Auth) není součástí této opravy a je řešeno v navazujícím kroku.
 - **Testy a Quality Gates:** 14 nových unit testů v `tests/unit/auth-form-security.test.ts`, celkem 806/806 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
+#### Povolení autentizace ze síťové adresy v developmentu (Dokončeno)
+- **Next.js development origin (`allowedDevOrigins`):** V `next.config.mjs` je nakonfigurováno pole `allowedDevOrigins` obsahující výchozí síťový vývojový origin `192.168.0.53` a `192.168.0.53:3000` (i dynamicky z `BETTER_AUTH_TRUSTED_ORIGINS`), čímž se zamezilo blokování dev prostředků a `/_next/hmr` (`Blocked cross-origin request to Next.js dev resource`).
+- **Better Auth trusted origins (`trustedOrigins`):** Implementována pomocná funkce `resolveTrustedOrigins(env)` v `infrastructure/auth/better-auth.ts`. Sestavuje explicitní seznam povolených originů pro CSRF validaci (`BETTER_AUTH_URL`, v development prostředí fallback na `http://192.168.0.53:3000` a volitelný čárkou oddělený seznam z `BETTER_AUTH_TRUSTED_ORIGINS`). Tím se vyřešilo odmítnutí `403 INVALID_ORIGIN` při volání Better Auth API ze síťové adresy.
+- **Konfigurace a fail-fast validace:** V `infrastructure/configuration/env.schema.ts` přidána volitelná proměnná `BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional()` a zdokumentována v `.env.example`.
+- **Zachování bezpečnosti:** Striktně odmítány zástupné znaky (`*`) a cizí/neautorizované originy (např. `http://evil.com` skončí `403 INVALID_ORIGIN`).
+- **Testy a Quality Gates:** 2 nové unit testy (`tests/unit/auth.test.ts` a `tests/unit/env.test.ts`), celkem 808/808 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
 ---
 
