@@ -56,6 +56,10 @@ export interface TaskRepository {
   findByIdForUpdate(id: string): Promise<TaskRecord | null>;
   findByBoardId(boardId: string): Promise<TaskRecord[]>;
   findByAreaId(areaId: string): Promise<TaskRecord[]>;
+  findUserTasksAcrossBoards(
+    userId: string,
+    boardIds: string[],
+  ): Promise<TaskRecord[]>;
   create(data: CreateTaskData): Promise<TaskRecord>;
   update(id: string, data: UpdateTaskData): Promise<TaskRecord>;
   delete(id: string): Promise<void>;

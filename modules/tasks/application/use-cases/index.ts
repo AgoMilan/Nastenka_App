@@ -76,3 +76,11 @@ export {
   type ReorderTaskInput,
   type ReorderTaskOutput,
 } from "./reorder-task.use-case.ts";
+
+export {
+  GetMyTasksUseCase,
+  type MyTaskView,
+  type MyTaskFilterMode,
+  type MyTaskRoleFilter,
+  type GetMyTasksOptions,
+} from "./get-my-tasks.use-case.ts";

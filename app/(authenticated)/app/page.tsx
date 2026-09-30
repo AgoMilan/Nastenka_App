@@ -4,7 +4,7 @@ import { resolveActorContext, auth } from "@/infrastructure/auth/index.ts";
 import { getDb } from "@/infrastructure/database/index.ts";
 import { DrizzleBoardRepository } from "@/infrastructure/database/repositories/drizzle-board-repository.ts";
 import { GetUserBoardsUseCase } from "@/modules/boards/application/use-cases/get-user-boards.use-case.ts";
-import { LogoutButton } from "@/components/auth/logout-button.tsx";
+import { AppHeader } from "@/components/navigation/app-header.tsx";
 import { BoardCard } from "@/components/boards/board-card.tsx";
 import { CreateBoardSection } from "@/components/boards/create-board-section.tsx";
 import { CreateBoardForm } from "@/components/boards/create-board-form.tsx";
@@ -29,26 +29,7 @@ export default async function AppPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      {/* Hlavní navigační panel */}
-      <header className="border-b border-zinc-200 bg-white sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-xl font-bold tracking-tight text-zinc-900">
-              Nástěnka
-            </span>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-medium text-zinc-900">{userName}</p>
-              {userEmail && (
-                <p className="text-xs text-zinc-500 font-mono">{userEmail}</p>
-              )}
-            </div>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+      <AppHeader userName={userName} userEmail={userEmail} activeTab="boards" />
 
       {/* Obsah stránky: Moje nástěnky */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

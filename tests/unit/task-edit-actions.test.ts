@@ -292,6 +292,13 @@ class InMemoryTaskRepository implements TaskRepository {
       .map((t) => ({ ...t }));
   }
 
+  async findUserTasksAcrossBoards(
+    _userId: string,
+    _boardIds: string[],
+  ): Promise<TaskRecord[]> {
+    return [];
+  }
+
   async create(data: CreateTaskData): Promise<TaskRecord> {
     const id = data.id ?? `task-${crypto.randomUUID()}`;
     const now = new Date();

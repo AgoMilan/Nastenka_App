@@ -1,5 +1,5 @@
-import { eq } from "drizzle-orm";
-import { tasks } from "../../../database/schema/index.ts";
+import { and, eq, inArray, or } from "drizzle-orm";
+import { tasks, taskParticipants } from "../../../database/schema/index.ts";
 import type { Database } from "../client.ts";
 import type {
   CreateTaskData,
@@ -102,6 +102,49 @@ export class DrizzleTaskRepository implements TaskRepository {
       .select()
       .from(tasks)
       .where(eq(tasks.areaId, areaId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      boardId: row.boardId,
+      areaId: row.areaId,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      priority: row.priority,
+      dueDate: row.dueDate,
+      createdBy: row.createdBy,
+      assigneeId: row.assigneeId,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      completedAt: row.completedAt,
+    }));
+  }
+
+  async findUserTasksAcrossBoards(
+    userId: string,
+    boardIds: string[],
+  ): Promise<TaskRecord[]> {
+    if (boardIds.length === 0) {
+      return [];
+    }
+
+    const participantSubquery = this.db
+      .select({ taskId: taskParticipants.taskId })
+      .from(taskParticipants)
+      .where(eq(taskParticipants.userId, userId));
+
+    const rows = await this.db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          inArray(tasks.boardId, boardIds),
+          or(
+            eq(tasks.assigneeId, userId),
+            inArray(tasks.id, participantSubquery),
+          ),
+        ),
+      );
 
     return rows.map((row) => ({
       id: row.id,

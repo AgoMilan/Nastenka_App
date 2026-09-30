@@ -280,6 +280,13 @@ class InMemoryTaskRepository implements TaskRepository {
     return Array.from(this.store.values()).filter((t) => t.areaId === areaId);
   }
 
+  async findUserTasksAcrossBoards(
+    _userId: string,
+    _boardIds: string[],
+  ): Promise<TaskRecord[]> {
+    return [];
+  }
+
   async create(
     data: CreateTaskData & { customCreatedAt?: Date },
   ): Promise<TaskRecord> {
