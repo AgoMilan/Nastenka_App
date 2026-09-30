@@ -112,6 +112,17 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Autorizace přes TaskPolicy (`TASK_REORDER`):** Právo na osobní řazení vyžaduje aktivní členství v nástěnce (`OWNER`, `MANAGER`, `MEMBER`) nebo globální roli `ADMIN`.
   - **UI a ovládací prvky (`TaskCard`):** Přístupná tlačítka pro posun nahoru (`▲`) a dolů (`▼`) s popiskem a klávesovou přístupností, a současně nativní HTML5 Drag & Drop (`draggable`, `onDragStart`, `onDragOver`, `onDrop`) s vizuální indikací přetahování a optimalizací pro rychlou odezvu.
   - **Kaskádové čištění:** Při smazání úkolu (`DeleteTaskUseCase`), odebrání člena (`RemoveMemberUseCase`) nebo dobrovolném odchodu z nástěnky (`LeaveBoardUseCase`) dochází k automatickému promazání odpovídajících záznamů v `user_task_orders`.
+- **Osobní pracovní prostor „Moje úkoly“ (STEP 7):**
+  - **Agregovaný pohled (`/app/my-work`):** Osobní prostor přihlášeného uživatele agregující úkoly napříč všemi aktivními nástěnkami, kde uživatel vystupuje jako přímý řešitel (`ASSIGNEE`) nebo spoluřešitel (`PARTICIPANT`).
+  - **Striktní bezpečnostní pravidlo:** Samotné autorství úkolu (`created_by`) bez role řešitele či spoluřešitele do přehledu Moje úkoly nepatří. Uživatel nesmí vidět úkoly ze smazaných nástěnek ani z nástěnek, kde není členem.
+  - **Precedence role uživatele:** Pokud je uživatel současně hlavním řešitelem i spoluřešitelem, má vždy přednost role Řešitel (`userRole = "ASSIGNEE"`).
+  - **Filtrování stavu:** Tlačítka filtru pro `Aktivní` (`ACTIVE` = `NOVÉ`, `PŘEVZATÉ`, `ROZPRACOVANÉ`, `ČEKÁ SE`; stav `HOTOVO` je striktně vyčleněn), `Dokončené` (`COMPLETED` = `HOTOVO`), `Archivované` (`ARCHIVED` = `ARCHIVOVÁNO`) a `Vše` (`ALL`). Výchozím filtrem je `Aktivní`.
+  - **Filtrování rolí:** Tlačítka filtru pro `Všechny` (`ALL`, výchozí), `Řešitel` (`ASSIGNEE`) a `Spoluřešitel` (`PARTICIPANT`).
+  - **Seskupení podle nástěnek v UI:** Úkoly jsou zobrazeny seskupené podle nástěnek s počtem úkolů v záhlaví a přímým odkazem na detail příslušné nástěnky (`/app/board/[boardId]`).
+  - **Karta úkolu (`MyTaskCard`):** Zobrazení odznaku role uživatele (`Řešitel` / `Spoluřešitel`), barevného stavu úkolu, priority (`● Spěchá`), oblasti (nebo Bez oblasti), termínu splnění s červeným varováním při překročení a odkazu do nástěnky.
+  - **Zachování osobního řazení:** V rámci každé skupiny nástěnky se uplatňuje osobní pořadí přihlášeného uživatele (`user_task_orders.position ASC`) s deterministickým fallbackem pro nepozicované úkoly (`SPĚCHÁ` > `BĚŽNÁ`, termín vzestupně, `createdAt DESC`, `id ASC`).
+  - **Navigace (`AppHeader`):** Společná hlavička propojující `Moje nástěnky` (`/app`) a `Moje úkoly` (`/app/my-work`).
+  - **Backend & Repozitář:** Metoda `findUserTasksAcrossBoards` v `DrizzleTaskRepository` s optimalizovaným SQL poddotazem do `task_participants`, omezující vyhledávání pouze na autorizované aktivní nástěnky z `BoardRepository` (`findActiveBoardsForUser` / `findActiveBoardsForAdmin`). Administrátor (`ADMIN`) vidí v tomto osobním přehledu pouze úkoly, kde je sám řešitelem nebo spoluřešitelem.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
 - **Databázové migrace:** 3 verzované Drizzle migrace (init schema + Better Auth persistence + user_task_orders).
 
@@ -120,6 +131,12 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 ## Přehled stavu implementace
 
 ### Co už funguje
+- Osobní pracovní prostor Moje úkoly (`/app/my-work`) s agregací úkolů napříč všemi aktivními nástěnkami uživatele.
+- Filtrování Moje úkoly podle stavu (Aktivní, Dokončené, Archivované, Vše) s výslovným vyčleněním HOTOVO z aktivních stavů.
+- Filtrování Moje úkoly podle role uživatele (Všechny, Řešitel, Spoluřešitel) s prioritou řešitele.
+- Seskupení úkolů podle nástěnky s počítadlem a proklikem na detail nástěnky.
+- Zachování osobního řazení uvnitř jednotlivých nástěnek v přehledu Moje úkoly.
+- Globální navigace mezi Moje nástěnky a Moje úkoly (`AppHeader`).
 - Board Directory (`/app`) – přehled nástěnek uživatele s rolemi a empty state.
 - Vytvoření nástěnky (`createBoardAction`) – autorizované vytvoření s rolí OWNER.
 - Board Detail (`/app/board/[boardId]`) – bezpečný kontejner s `notFound()` ochranou.
@@ -185,9 +202,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství i Osobní řazení úkolů jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství a Osobní řazení úkolů jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B, STEP 6 a Board Edit).
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů i Osobní pracovní prostor Moje úkoly jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů i Osobní prostor Moje úkoly jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B, STEP 6, STEP 7 a Board Edit).
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (745 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (766 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -196,6 +213,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 30. 9. 2026 | STEP 7 – Osobní pracovní prostor „Moje úkoly“ (/app/my-work agregující úkoly přihlášeného uživatele napříč všemi aktivními nástěnkami pro ASSIGNEE a PARTICIPANT s vyloučením pouhého created_by, precedence ASSIGNEE, filtry stavů ACTIVE [bez HOTOVO] / COMPLETED [HOTOVO] / ARCHIVED / ALL, filtry rolí ALL / ASSIGNEE / PARTICIPANT, seskupení podle nástěnek s počítadly a odkazy, zachování osobního řazení uvnitř nástěnek, navigace AppHeader, DrizzleTaskRepository.findUserTasksAcrossBoards, GetMyTasksUseCase, 21 nových testů, 766 celkem) |
 | 30. 9. 2026 | STEP 6 – Personal Ordering (osobní pořadí úkolů per uživatel, tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a nativní HTML5 drag & drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) |
 | 29. 9. 2026 | STEP 5B – Task Status Workflow, Take Over, Participants & Lifecycle UI (TaskCard výběr stavů s completedAt, převzetí úkolu takeOverTaskAction na sebe s vyjmutím ze spoluřešitelů, správa spoluřešitelů připojit se / opustit / odebrat, kontextové menu ⋯ pro archivaci a řízený hard-delete s textem SMAZAT přes DeleteTaskDialog, read-only ochrana archivu, 30 nových testů, 726 celkem) |
 | 29. 9. 2026 | Board Edit – Úprava metadat nástěnky (EditBoardDialog, EditBoardButton, updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository.update, autorizace BOARD_EDIT pro OWNER/MANAGER/ADMIN, ochrana created_by, revalidace detailu i přehledu /app, 32 nových testů, 696 celkem) |

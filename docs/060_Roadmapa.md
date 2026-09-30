@@ -37,6 +37,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | Board Edit | Board Edit UI & Use Case (úprava metadat nástěnky – název a popis přes EditBoardDialog a updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository o update, autorizace přes BoardPolicy BOARD_EDIT pro OWNER, MANAGER, ADMIN, ochrana boards.created_by, revalidace detailu i /app, 32 nových testů, 696 celkem) | DONE | 29. 9. 2026 |
 | STEP 5B | Task Status Workflow, Take Over, Participants & Lifecycle UI (výběr stavů úkolu NOVÉ / PŘEVZATÉ / ROZPRACOVANÉ / ČEKÁ SE / HOTOVO s automatickým completedAt, převzetí úkolu přes takeOverTaskAction a TakeOverTaskUseCase s vyčištěním ze spoluřešitelů, správa spoluřešitelů – připojení joinTaskAction, odpojení leaveTaskAction a odebrání removeTaskParticipantAction pro řešitele a správu, kontextové menu ⋯ pro archivaci archiveTaskAction a trvalé smazání deleteTaskAction s modálním potvrzením přes přesný text SMAZAT přes DeleteTaskDialog, ochrana read-only pro archivované úkoly dle architektonických pravidel, 30 nových testů, 726 celkem) | DONE | 29. 9. 2026 |
 | STEP 6 (Area & Task) | Personal Ordering (osobní řazení úkolů per uživatel, nová tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a HTML5 Drag & Drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) | DONE | 30. 9. 2026 |
+| STEP 7 | Osobní pracovní prostor „Moje úkoly“ (/app/my-work agregace úkolů napříč aktivními nástěnkami uživatele kde je ASSIGNEE nebo PARTICIPANT, vyloučení pouhého created_by, precedence ASSIGNEE, filtry stavů s vyčleněním HOTOVO z ACTIVE, filtry rolí ALL/ASSIGNEE/PARTICIPANT, seskupení dle nástěnek s počítadlem a proklikem, zachování osobního řazení v rámci nástěnek, AppHeader navigace, GetMyTasksUseCase, findUserTasksAcrossBoards, 21 nových testů, 766 celkem) | DONE | 30. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -197,6 +198,42 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Při smazání úkolu (`DeleteTaskUseCase`), odebrání člena (`RemoveMemberUseCase`) nebo dobrovolném odchodu z nástěnky (`LeaveBoardUseCase`) se automaticky čistí příslušné záznamy v `user_task_orders`.
 - **Testy a Quality Gates:** 19 nových unit a integračních testů v `tests/unit/personal-task-ordering.test.ts`, celkem 745/745 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 7 – Osobní pracovní prostor „Moje úkoly“ (Dokončeno)
+- **Koncept a cíl:**
+  - Poskytnout přihlášenému uživateli agregovaný osobní pohled (`/app/my-work`) na všechny úkoly, které se ho přímo týkají napříč všemi aktivními nástěnkami, k nimž má v daný okamžik přístup.
+- **Bezpečnostní pravidla a scoping:**
+  - Striktní backendová autorita: přístup je omezen výhradně na nástěnky získané z `findActiveBoardsForUser()` (nebo `findActiveBoardsForAdmin()` pro globálního administrátora).
+  - Vyloučení pouhého autorství: samotné `created_by` bez vztahu řešitele (`assignee_id`) nebo spoluřešitele (`task_participants`) do přehledu Moje úkoly striktně nepatří.
+  - Okamžitá reakce na změny členství: nečlenové, odebraní členové a členové po dobrovolném odchodu z nástěnky nemají k úkolům přístup.
+  - Respektování soft-delete: smazané nástěnky (`deleted_at IS NOT NULL`) jsou vyloučeny na úrovni SQL.
+  - Globální administrátor (`ADMIN`): v přehledu Moje úkoly vidí pouze úkoly, kde je sám řešitelem nebo spoluřešitelem (nevidí cizí úkoly, které se ho osobně netýkají).
+- **Vztah uživatele k úkolu (Precedence):**
+  - Pokud je uživatel současně hlavním řešitelem i spoluřešitelem, je vyhodnocena role Řešitel (`userRole = "ASSIGNEE"`).
+- **Filtrování stavu (Status Filters):**
+  - `Aktivní` (`ACTIVE` = `NOVÉ`, `PŘEVZATÉ`, `ROZPRACOVANÉ`, `ČEKÁ SE`; stav `HOTOVO` je striktně vyčleněn a do aktivních nepatří).
+  - `Dokončené` (`COMPLETED` = `HOTOVO`).
+  - `Archivované` (`ARCHIVED` = `ARCHIVOVÁNO`).
+  - `Vše` (`ALL` = všechny úkoly bez ohledu na stav).
+  - Výchozí filtr: `Aktivní`.
+- **Filtrování rolí (Role Filters):**
+  - `Všechny` (`ALL`, výchozí).
+  - `Řešitel` (`ASSIGNEE`).
+  - `Spoluřešitel` (`PARTICIPANT`).
+- **Seskupení a UI prezentace:**
+  - Úkoly jsou na stránce seskupeny podle jednotlivých nástěnek (seřazených abecedně dle názvu).
+  - Každá skupina obsahuje záhlaví s názvem nástěnky, počítadlem zobrazených úkolů a přímým odkazem do detailu nástěnky (`/app/board/[boardId]`).
+  - Karta úkolu (`MyTaskCard`): vizuální badge role uživatele (`Řešitel` / `Spoluřešitel`), badge stavu úkolu, badge priority `● Spěchá`, název oblasti, formátovaný termín splnění s červeným indikátorem po termínu a odkaz na nástěnku.
+  - `MyTasksFilters`: klientský komponent pro přepínání stavových a rolových filtrů bez nutnosti reloadu stránky.
+  - `AppHeader`: sdílená globální navigace propojující záložky `Moje nástěnky` (`/app`) a `Moje úkoly` (`/app/my-work`).
+- **Zachování osobního řazení (Personal Ordering):**
+  - Uvnitř každé nástěnky se prioritně uplatňuje osobní pořadí přihlášeného uživatele (`user_task_orders.position ASC`).
+  - Nepozicované úkoly využívají deterministický fallback: priorita `SPĚCHÁ` před `BĚŽNÁ`, termín splnění vzestupně (nejdříve s termínem), datum vytvoření `createdAt DESC` a ID úkolu vzestupně.
+- **Backend a Persistence:**
+  - Rozšíření portu `TaskRepository` o metodu `findUserTasksAcrossBoards(userId: string, boardIds: string[]): Promise<TaskRecord[]>`.
+  - Implementace v `DrizzleTaskRepository` s optimalizovaným SQL poddotazem `WHERE (tasks.assignee_id = userId OR tasks.id IN (SELECT task_id FROM task_participants WHERE user_id = userId)) AND tasks.board_id IN (...)`. Prázdný seznam `boardIds` okamžitě vrací prázdné pole bez zbytečného SQL volání.
+  - Implementace use casu `GetMyTasksUseCase` v aplikační vrstvě s obohacením o `boardName`, `areaName`, `userRole` a aplikací filtrů a řazení.
+- **Testy a Quality Gates:** 21 nových unit a integračních testů v `tests/unit/my-tasks.test.ts`, celkem 766/766 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -213,11 +250,9 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **Osobní prostor / Moje úkoly (Personal Dashboard):**
-   - Přehled úkolů přihlášeného uživatele agregovaný napříč všemi nástěnkami (řešitel i spoluřešitel).
-2. **Komentáře a diskuze k úkolům:**
+1. **Komentáře a diskuze k úkolům:**
    - Textové komentáře k úkolům, časová osa diskuze a historie aktivit.
-3. **Přílohy k úkolům:**
+2. **Přílohy k úkolům:**
    - Správa a nahrávání souborů k úkolům.
 
 ---
