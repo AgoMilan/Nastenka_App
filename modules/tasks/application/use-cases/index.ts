@@ -84,3 +84,26 @@ export {
   type MyTaskRoleFilter,
   type GetMyTasksOptions,
 } from "./get-my-tasks.use-case.ts";
+
+export {
+  GetTaskCommentsUseCase,
+  type GetTaskCommentsInput,
+  type TaskCommentView,
+  type TaskCommentAuthorView,
+} from "./get-task-comments.use-case.ts";
+
+export {
+  AddTaskCommentUseCase,
+  type AddTaskCommentInput,
+} from "./add-task-comment.use-case.ts";
+
+export {
+  UpdateTaskCommentUseCase,
+  type UpdateTaskCommentInput,
+} from "./update-task-comment.use-case.ts";
+
+export {
+  DeleteTaskCommentUseCase,
+  type DeleteTaskCommentInput,
+} from "./delete-task-comment.use-case.ts";
+

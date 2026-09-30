@@ -10,6 +10,7 @@ import { DrizzleTaskRepository } from "@/infrastructure/database/repositories/dr
 import { DrizzleTaskParticipantRepository } from "@/infrastructure/database/repositories/drizzle-task-participant-repository.ts";
 import { DrizzleUserRepository } from "@/infrastructure/database/repositories/drizzle-user-repository.ts";
 import { DrizzleUserTaskOrderRepository } from "@/infrastructure/database/repositories/drizzle-user-task-order-repository.ts";
+import { DrizzleTaskCommentRepository } from "@/infrastructure/database/repositories/drizzle-task-comment-repository.ts";
 import { GetBoardDetailUseCase } from "@/modules/boards/application/use-cases/get-board-detail.use-case.ts";
 import { GetUserBoardsUseCase } from "@/modules/boards/application/use-cases/get-user-boards.use-case.ts";
 import { GetBoardAreasUseCase } from "@/modules/areas/application/use-cases/get-board-areas.use-case.ts";
@@ -77,6 +78,7 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
   const taskParticipantRepo = new DrizzleTaskParticipantRepository(db);
   const userRepo = new DrizzleUserRepository(db);
   const userTaskOrderRepo = new DrizzleUserTaskOrderRepository(db);
+  const taskCommentRepo = new DrizzleTaskCommentRepository(db);
 
   const getBoardDetailUseCase = new GetBoardDetailUseCase(
     boardRepo,
@@ -112,6 +114,7 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
     areaRepo,
     userRepo,
     userTaskOrderRepo,
+    taskCommentRepo,
   );
   const tasksResult = await getBoardTasksUseCase.execute(actor, boardId, {
     filter: filterMode,

@@ -9,6 +9,7 @@ import { DrizzleTaskParticipantRepository } from "@/infrastructure/database/repo
 import { DrizzleAreaRepository } from "@/infrastructure/database/repositories/drizzle-area-repository.ts";
 import { DrizzleUserRepository } from "@/infrastructure/database/repositories/drizzle-user-repository.ts";
 import { DrizzleUserTaskOrderRepository } from "@/infrastructure/database/repositories/drizzle-user-task-order-repository.ts";
+import { DrizzleTaskCommentRepository } from "@/infrastructure/database/repositories/drizzle-task-comment-repository.ts";
 import {
   GetMyTasksUseCase,
   type MyTaskFilterMode,
@@ -66,6 +67,7 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
   const areaRepo = new DrizzleAreaRepository(db);
   const userRepo = new DrizzleUserRepository(db);
   const userTaskOrderRepo = new DrizzleUserTaskOrderRepository(db);
+  const taskCommentRepo = new DrizzleTaskCommentRepository(db);
 
   const getMyTasksUseCase = new GetMyTasksUseCase(
     boardRepo,
@@ -74,6 +76,7 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
     areaRepo,
     userRepo,
     userTaskOrderRepo,
+    taskCommentRepo,
   );
 
   const tasksResult = await getMyTasksUseCase.execute(actor, {

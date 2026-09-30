@@ -31,6 +31,12 @@ export {
 } from "./user-task-orders.ts";
 
 export {
+  taskComments,
+  type TaskCommentSelect,
+  type TaskCommentInsert,
+} from "./task-comments.ts";
+
+export {
   auditLogs,
   type AuditLogSelect,
   type AuditLogInsert,
@@ -76,4 +82,5 @@ export {
   sessionsRelations,
   accountsRelations,
   userTaskOrdersRelations,
+  taskCommentsRelations,
 } from "./relations.ts";

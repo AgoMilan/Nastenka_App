@@ -136,6 +136,16 @@ export function MyTaskCard({ task }: MyTaskCardProps) {
               {overdue && <span className="ml-1 text-2xs text-red-500 font-bold">(po termínu)</span>}
             </span>
           )}
+
+          {/* Počet komentářů */}
+          {(task.commentsCount ?? 0) > 0 && (
+            <span
+              className="inline-flex items-center gap-1 text-zinc-600 bg-zinc-50 px-1.5 py-0.5 rounded border border-zinc-200/60 text-2xs font-medium"
+              title={`${task.commentsCount} ${task.commentsCount === 1 ? "komentář" : task.commentsCount! >= 2 && task.commentsCount! <= 4 ? "komentáře" : "komentářů"}`}
+            >
+              💬 {task.commentsCount}
+            </span>
+          )}
         </div>
 
         {/* Odkaz na otevření nástěnky */}

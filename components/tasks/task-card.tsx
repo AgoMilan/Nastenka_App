@@ -7,6 +7,7 @@ import type { AreaView } from "@/modules/areas/application/use-cases/index.ts";
 import type { BoardMemberView } from "@/modules/boards/application/use-cases/index.ts";
 import { EditTaskDialog } from "./edit-task-dialog.tsx";
 import { DeleteTaskDialog } from "./delete-task-dialog.tsx";
+import { TaskCommentsDialog } from "./task-comments-dialog.tsx";
 import {
   changeTaskStatusAction,
   takeOverTaskAction,
@@ -79,7 +80,15 @@ export function TaskCard({
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = React.useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = React.useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = React.useState(false);
+  const [isCommentsOpen, setIsCommentsOpen] = React.useState(false);
+  const [commentsCount, setCommentsCount] = React.useState(
+    task.commentsCount ?? 0,
+  );
   const [actionError, setActionError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setCommentsCount(task.commentsCount ?? 0);
+  }, [task.commentsCount]);
 
   const [isPending, startTransition] = React.useTransition();
 
@@ -647,9 +656,33 @@ export function TaskCard({
             </div>
           </div>
 
-          {/* Autor */}
-          <div className="text-[11px] text-zinc-400 pt-0.5">
-            Zadal/a: {task.createdBy.name || "Neznámý uživatel"}
+          {/* Autor a diskuze */}
+          <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-0.5">
+            <span>Zadal/a: {task.createdBy.name || "Neznámý uživatel"}</span>
+            {boardId && (
+              <button
+                type="button"
+                onClick={() => setIsCommentsOpen(true)}
+                className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-900 transition-colors font-medium px-1.5 py-0.5 rounded hover:bg-zinc-100"
+                title={`Diskuze k úkolu (${commentsCount})`}
+                aria-label={`Otevřít diskuzi (${commentsCount} komentářů)`}
+              >
+                <svg
+                  className="w-3.5 h-3.5 text-zinc-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
+                <span>{commentsCount}</span>
+              </button>
+            )}
           </div>
         </div>
       </article>
@@ -718,6 +751,19 @@ export function TaskCard({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Dialog pro diskuzi / komentáře k úkolu */}
+      {isCommentsOpen && boardId && (
+        <TaskCommentsDialog
+          boardId={boardId}
+          taskId={task.id}
+          taskTitle={task.title}
+          isArchived={isArchived}
+          isOpen={isCommentsOpen}
+          onClose={() => setIsCommentsOpen(false)}
+          onCommentCountChange={(newCount) => setCommentsCount(newCount)}
+        />
       )}
     </>
   );

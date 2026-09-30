@@ -128,8 +128,29 @@ export function checkTaskPermission(
     return deny("CANNOT_LEAVE_OTHER_PARTICIPANT");
   }
 
-  // ── 7. Global ADMIN bypass ───────────────────────────────
-  // ADMIN má explicitní přístup ke všem Task operacím na dané Nástěnce.
+  // ── 7. Invarianty komentářů (platí bez výjimky pro všechny včetně ADMINa) ─
+  if (
+    action === "TASK_COMMENT_CREATE" ||
+    action === "TASK_COMMENT_EDIT_OWN" ||
+    action === "TASK_COMMENT_DELETE_OWN"
+  ) {
+    if (task.status === "ARCHIVOVÁNO") {
+      return deny("TASK_ARCHIVED");
+    }
+  }
+
+  if (
+    action === "TASK_COMMENT_EDIT_OWN" ||
+    action === "TASK_COMMENT_DELETE_OWN"
+  ) {
+    if (!task.commentAuthorId || task.commentAuthorId !== actor.actor_user_id) {
+      return deny("NOT_COMMENT_AUTHOR");
+    }
+  }
+
+  // ── 8. Global ADMIN bypass ───────────────────────────────
+  // ADMIN má explicitní přístup ke všem Task operacím na dané Nástěnce
+  // (s výjimkou výše ověřených striktních doménových invariantů).
   if (actor.global_role === "ADMIN") {
     return ALLOW;
   }
@@ -239,6 +260,26 @@ export function checkTaskPermission(
     // ── TASK_REORDER ────────────────────────────────────────
     // Změna osobního pořadí: dostupné všem členům Nástěnky i ADMINovi pro vlastní profil.
     case "TASK_REORDER":
+      return ALLOW;
+
+    // ── TASK_COMMENT_VIEW ───────────────────────────────────
+    // Všichni členové Nástěnky mohou číst komentáře k úkolu (i u archivovaného).
+    case "TASK_COMMENT_VIEW":
+      return ALLOW;
+
+    // ── TASK_COMMENT_CREATE ─────────────────────────────────
+    // Všichni členové Nástěnky mohou přidat komentář (pokud není úkol archivován).
+    case "TASK_COMMENT_CREATE":
+      return ALLOW;
+
+    // ── TASK_COMMENT_EDIT_OWN ───────────────────────────────
+    // Autor smí upravit svůj vlastní komentář (pokud není úkol archivován).
+    case "TASK_COMMENT_EDIT_OWN":
+      return ALLOW;
+
+    // ── TASK_COMMENT_DELETE_OWN ─────────────────────────────
+    // Autor smí smazat svůj vlastní komentář (pokud není úkol archivován).
+    case "TASK_COMMENT_DELETE_OWN":
       return ALLOW;
 
     // ── Exhaustiveness check ─────────────────────────────────

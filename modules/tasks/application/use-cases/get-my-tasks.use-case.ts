@@ -10,6 +10,7 @@ import type {
   UserRepository,
 } from "../../../boards/application/ports/index.ts";
 import type {
+  TaskCommentRepository,
   TaskParticipantRecord,
   TaskParticipantRepository,
   TaskPriority,
@@ -53,6 +54,7 @@ export interface MyTaskView {
   readonly updatedAt: Date;
   readonly completedAt: Date | null;
   readonly personalPosition?: number;
+  readonly commentsCount?: number;
 }
 
 /**
@@ -80,6 +82,7 @@ export class GetMyTasksUseCase {
   private readonly areaRepo: AreaRepository;
   private readonly userRepo: UserRepository;
   private readonly userTaskOrderRepo?: UserTaskOrderRepository;
+  private readonly taskCommentRepo?: TaskCommentRepository;
 
   constructor(
     boardRepo: BoardRepository,
@@ -88,6 +91,7 @@ export class GetMyTasksUseCase {
     areaRepo: AreaRepository,
     userRepo: UserRepository,
     userTaskOrderRepo?: UserTaskOrderRepository,
+    taskCommentRepo?: TaskCommentRepository,
   ) {
     this.boardRepo = boardRepo;
     this.taskRepo = taskRepo;
@@ -95,6 +99,7 @@ export class GetMyTasksUseCase {
     this.areaRepo = areaRepo;
     this.userRepo = userRepo;
     this.userTaskOrderRepo = userTaskOrderRepo;
+    this.taskCommentRepo = taskCommentRepo;
   }
 
   async execute(
@@ -253,6 +258,14 @@ export class GetMyTasksUseCase {
       }
     }
 
+    // Načtení počtu komentářů pro úkoly dávkově (Batch)
+    let commentCounts = new Map<string, number>();
+    if (this.taskCommentRepo && tasksWithRole.length > 0) {
+      commentCounts = await this.taskCommentRepo.countByTaskIds(
+        tasksWithRole.map(({ task }) => task.id),
+      );
+    }
+
     // ── 10. Sestavení obohaceného zobrazení MyTaskView ──────────
     const views: MyTaskView[] = tasksWithRole.map(({ task: t, userRole }) => {
       const taskParticipants = participantsByTaskId.get(t.id) ?? [];
@@ -293,6 +306,7 @@ export class GetMyTasksUseCase {
         updatedAt: t.updatedAt,
         completedAt: t.completedAt,
         personalPosition: personalPos,
+        commentsCount: commentCounts.get(t.id) ?? 0,
       };
     });
 

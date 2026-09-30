@@ -16,6 +16,7 @@ import type {
 } from "../../../boards/application/ports/index.ts";
 import { checkTaskPermission } from "../policies/task-policy.ts";
 import type {
+  TaskCommentRepository,
   TaskParticipantRecord,
   TaskParticipantRepository,
   TaskPriority,
@@ -65,6 +66,7 @@ export interface BoardTaskView {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly completedAt: Date | null;
+  readonly commentsCount?: number;
 }
 
 /**
@@ -95,6 +97,7 @@ export class GetBoardTasksUseCase {
   private readonly areaRepo: AreaRepository;
   private readonly userRepo: UserRepository;
   private readonly userTaskOrderRepo?: UserTaskOrderRepository;
+  private readonly taskCommentRepo?: TaskCommentRepository;
 
   constructor(
     boardRepo: BoardRepository,
@@ -104,6 +107,7 @@ export class GetBoardTasksUseCase {
     areaRepo: AreaRepository,
     userRepo: UserRepository,
     userTaskOrderRepo?: UserTaskOrderRepository,
+    taskCommentRepo?: TaskCommentRepository,
   ) {
     this.boardRepo = boardRepo;
     this.membershipRepo = membershipRepo;
@@ -112,6 +116,7 @@ export class GetBoardTasksUseCase {
     this.areaRepo = areaRepo;
     this.userRepo = userRepo;
     this.userTaskOrderRepo = userTaskOrderRepo;
+    this.taskCommentRepo = taskCommentRepo;
   }
 
   async execute(
@@ -227,6 +232,14 @@ export class GetBoardTasksUseCase {
     const users = await this.userRepo.findByIds(Array.from(userIdsSet));
     const userMap = new Map(users.map((u) => [u.id, u.name]));
 
+    // Načtení počtu komentářů pro úkoly dávkově (Batch)
+    let commentCounts = new Map<string, number>();
+    if (this.taskCommentRepo && filteredTasks.length > 0) {
+      commentCounts = await this.taskCommentRepo.countByTaskIds(
+        filteredTasks.map((t) => t.id),
+      );
+    }
+
     // ── 11. Sestavení obohaceného aplikačního modelu ───────────
     const taskViews: BoardTaskView[] = filteredTasks.map((t) => {
       const taskParticipants = participantsByTaskId.get(t.id) ?? [];
@@ -262,6 +275,7 @@ export class GetBoardTasksUseCase {
         createdAt: t.createdAt,
         updatedAt: t.updatedAt,
         completedAt: t.completedAt,
+        commentsCount: commentCounts.get(t.id) ?? 0,
       };
     });
 

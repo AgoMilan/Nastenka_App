@@ -72,7 +72,11 @@ export type TaskAction =
   | "TASK_CHANGE_DUE_DATE"
   | "TASK_ARCHIVE"
   | "TASK_DELETE"
-  | "TASK_REORDER";
+  | "TASK_REORDER"
+  | "TASK_COMMENT_VIEW"
+  | "TASK_COMMENT_CREATE"
+  | "TASK_COMMENT_EDIT_OWN"
+  | "TASK_COMMENT_DELETE_OWN";
 
 // ─────────────────────────────────────────────────────────────
 // Task Deny Reasons a Result
@@ -82,7 +86,9 @@ export type TaskDenyReason =
   | AuthorizationDenyReason
   | "CROSS_BOARD_ACCESS"
   | "TASK_HAS_NO_ASSIGNEE"
-  | "CANNOT_LEAVE_OTHER_PARTICIPANT";
+  | "CANNOT_LEAVE_OTHER_PARTICIPANT"
+  | "TASK_ARCHIVED"
+  | "NOT_COMMENT_AUTHOR";
 
 export type TaskAuthorizationResult =
   | { readonly allowed: true }
@@ -146,6 +152,16 @@ export interface TaskAuthorizationTarget {
    * Příznak smazané Nástěnky (soft-delete).
    */
   readonly isBoardDeleted?: boolean;
+
+  /**
+   * Aktuální stav úkolu (např. 'ARCHIVOVÁNO').
+   */
+  readonly status?: string;
+
+  /**
+   * ID autora komentáře pro autorizaci úpravy a smazání komentáře.
+   */
+  readonly commentAuthorId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

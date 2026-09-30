@@ -8,6 +8,7 @@ import { areas } from "./areas.ts";
 import { tasks } from "./tasks.ts";
 import { taskParticipants } from "./task-participants.ts";
 import { userTaskOrders } from "./user-task-orders.ts";
+import { taskComments } from "./task-comments.ts";
 import { auditLogs } from "./audit-logs.ts";
 import { notifications } from "./notifications.ts";
 import { outbox } from "./outbox.ts";
@@ -23,6 +24,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   createdTasks: many(tasks, { relationName: "taskCreator" }),
   assignedTasks: many(tasks, { relationName: "taskAssignee" }),
   participations: many(taskParticipants),
+  comments: many(taskComments),
   auditLogs: many(auditLogs),
   notifications: many(notifications),
   outboxEvents: many(outbox),
@@ -91,6 +93,7 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
     relationName: "taskAssignee",
   }),
   participants: many(taskParticipants),
+  comments: many(taskComments),
 }));
 
 /**
@@ -189,4 +192,18 @@ export const userTaskOrdersRelations = relations(
     }),
   }),
 );
+
+/**
+ * Relační vazby pro komentáře úkolu (TaskComment).
+ */
+export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
+  task: one(tasks, {
+    fields: [taskComments.taskId],
+    references: [tasks.id],
+  }),
+  author: one(users, {
+    fields: [taskComments.authorId],
+    references: [users.id],
+  }),
+}));
 
