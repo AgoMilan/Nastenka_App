@@ -42,6 +42,11 @@ export const envSchema = z.object({
     .string()
     .url("BETTER_AUTH_URL musí mít platný formát URL")
     .default("http://localhost:3000"),
+
+  // Volitelné dodatečné důvěryhodné originy pro Better Auth (oddělené čárkou)
+  BETTER_AUTH_TRUSTED_ORIGINS: z
+    .string()
+    .optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

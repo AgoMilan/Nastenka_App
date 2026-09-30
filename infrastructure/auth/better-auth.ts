@@ -35,7 +35,31 @@ export const serverOwnedUserFields = {
   },
 } satisfies NonNullable<BetterAuthOptions["user"]>["additionalFields"];
 
-let cachedAuth: AuthInstance | null = null;
+/**
+ * Sestaví seznam explicitních důvěryhodných originů pro Better Auth (CSRF ochrana).
+ * Vždy obsahuje env.BETTER_AUTH_URL a případné další explicitně konfigurované originy.
+ * V development prostředí zahrnuje lokální síťový development origin.
+ */
+export function resolveTrustedOrigins(env: Env): string[] {
+  const origins = new Set<string>();
+
+  if (env.BETTER_AUTH_URL) {
+    origins.add(env.BETTER_AUTH_URL);
+  }
+
+  if (env.BETTER_AUTH_TRUSTED_ORIGINS) {
+    for (const origin of env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")) {
+      const trimmed = origin.trim();
+      if (trimmed.length > 0) {
+        origins.add(trimmed);
+      }
+    }
+  } else if (env.NODE_ENV === "development") {
+    origins.add("http://192.168.0.53:3000");
+  }
+
+  return Array.from(origins);
+}
 
 export function createBetterAuthOptions(
   db: Database,
@@ -45,6 +69,7 @@ export function createBetterAuthOptions(
     appName: "Nástěnka",
     baseURL: env.BETTER_AUTH_URL,
     secret: env.BETTER_AUTH_SECRET,
+    trustedOrigins: resolveTrustedOrigins(env),
     database: drizzleAdapter(db, betterAuthDrizzleAdapterConfig),
     emailAndPassword: {
       enabled: true,
@@ -63,6 +88,8 @@ export function createBetterAuthOptions(
 export function createAuth(db: Database, env: Env): AuthInstance {
   return betterAuth(createBetterAuthOptions(db, env));
 }
+
+let cachedAuth: AuthInstance | null = null;
 
 export function getAuth(): AuthInstance {
   cachedAuth ??= createAuth(getDb(), getEnv());

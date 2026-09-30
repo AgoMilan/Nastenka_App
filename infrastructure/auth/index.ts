@@ -5,6 +5,7 @@ export {
   createBetterAuthOptions,
   getAuth,
   resetAuthForTests,
+  resolveTrustedOrigins,
   serverOwnedUserFields,
 } from "./better-auth.ts";
 

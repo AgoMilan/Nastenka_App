@@ -194,4 +194,38 @@ describe("Better Auth server foundation & ActorContext", () => {
 
     assert.equal(actor, null);
   });
+
+  test("resolveTrustedOrigins obsahuje BETTER_AUTH_URL a další explicitní originy", async () => {
+    const { resolveTrustedOrigins, createBetterAuthOptions } =
+      await import("../../infrastructure/auth/index.ts");
+
+    // Test prostředí bez dalších originů
+    const baseOrigins = resolveTrustedOrigins(mockEnv);
+    assert.deepEqual(baseOrigins, ["http://localhost:3000"]);
+
+    // Test prostředí s explicitním BETTER_AUTH_TRUSTED_ORIGINS
+    const multiEnv: Env = {
+      ...mockEnv,
+      BETTER_AUTH_TRUSTED_ORIGINS:
+        "http://localhost:3000,http://192.168.0.53:3000",
+    };
+    const resolved = resolveTrustedOrigins(multiEnv);
+    assert.ok(resolved.includes("http://localhost:3000"));
+    assert.ok(resolved.includes("http://192.168.0.53:3000"));
+
+    // Development prostředí automaticky zahrnuje lokální síťový origin
+    const devEnv: Env = {
+      ...mockEnv,
+      NODE_ENV: "development",
+    };
+    const devResolved = resolveTrustedOrigins(devEnv);
+    assert.ok(devResolved.includes("http://192.168.0.53:3000"));
+
+    // Ověření předání do createBetterAuthOptions
+    const options = createBetterAuthOptions({} as unknown as Database, multiEnv);
+    assert.ok(Array.isArray(options.trustedOrigins));
+    assert.ok(
+      (options.trustedOrigins as string[]).includes("http://192.168.0.53:3000"),
+    );
+  });
 });

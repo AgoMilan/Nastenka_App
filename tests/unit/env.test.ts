@@ -86,4 +86,16 @@ describe("Environment Configuration & Validation (Fail-Fast)", () => {
       assert(!err.message.includes(secretValue));
     }
   });
+
+  test("volitelná proměnná BETTER_AUTH_TRUSTED_ORIGINS je úspěšně načtena", () => {
+    const env = validateEnv({
+      ...validMockEnv,
+      BETTER_AUTH_TRUSTED_ORIGINS:
+        "http://localhost:3000,http://192.168.0.53:3000",
+    });
+    assert.equal(
+      env.BETTER_AUTH_TRUSTED_ORIGINS,
+      "http://localhost:3000,http://192.168.0.53:3000",
+    );
+  });
 });
