@@ -23,7 +23,7 @@ Nástěnka je modulární monolit postavený na Next.js 16 (App Router), TypeScr
 
 Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
-- **Databázové schéma (Drizzle ORM):** 12 tabulek – `users`, `boards`, `memberships`, `areas`, `tasks`, `task_participants`, `audit_logs`, `notifications`, `outbox`, `sessions`, `accounts`, `verifications`.
+- **Databázové schéma (Drizzle ORM):** 13 tabulek – `users`, `boards`, `memberships`, `areas`, `tasks`, `task_participants`, `user_task_orders`, `audit_logs`, `notifications`, `outbox`, `sessions`, `accounts`, `verifications`.
 - **Better Auth – serverová autentizace:** Integrace Better Auth 1.7.5 s Drizzle adaptérem, lazy inicializace, e-mail/heslo přihlašování.
 - **ActorContext:** Server-side `resolveActorContext()` sestavuje bezpečný kontext volajícího (actor_user_id, global_role, session_id, is_active) z live DB stavu. Vrací `null` pro neaktivní nebo soft-deleted uživatele.
 - **Board Authorization Policy Engine:** `checkBoardPermission()` vyhodnocuje Board-level oprávnění na základě ActorContext a členství. Implementuje explicitní autorizační matici (ALLOW/DENY s důvody), ADMIN bypass, soft-delete guard a 401 vs 403 rozlišení.
@@ -104,8 +104,16 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Správa spoluřešitelů (Participants UI):** Zobrazení seznamu spoluřešitelů na kartě úkolu, tlačítko *„+ Připojit se“* (`joinTaskAction` / `JoinTaskAsParticipantUseCase`) pro dobrovolné zapojení člena (vyžaduje existenci hlavního řešitele, vylučuje duplicitu), tlačítko *„Opustit“* (`leaveTaskAction` / `LeaveTaskAsParticipantUseCase`) pro dobrovolné odpojení spoluřešitele a tlačítko `✕` (`removeTaskParticipantAction` / `RemoveTaskParticipantUseCase`) pro nucené odebrání spoluřešitele vyhrazené hlavnímu řešiteli, správci, vlastníkovi nebo administrátorovi.
   - **Archivace úkolu (Archive Task):** Volba *„Archivovat úkol“* v kontextovém menu `⋯` na kartě úkolu s potvrzovacím dialogem přes `archiveTaskAction` a `ArchiveTaskUseCase`. Úkol přechází do stavu `ARCHIVOVÁNO`, mizí z aktivního přehledu a zobrazuje se ve filtru *„Archivované“*. Archivovaný úkol je striktně pouze pro čtení (read-only) – nelze dodatečně měnit jeho data, stav ani spoluřešitele; obnova z archivu (restore/unarchive) není podle schválených architektonických zásad podporována.
   - **Řízené definitivní smazání úkolu (Delete Task):** Volba *„Smazat úkol“* v kontextovém menu `⋯` otevírající destruktivní modální dialog `DeleteTaskDialog`. Smazání představuje nevratný hard-delete a vyžaduje bezpečnostní ruční vepsání přesného potvrzovacího textu `SMAZAT` (validováno Zodem, Server Action `deleteTaskAction` i `DeleteTaskUseCase`). Kaskádově odstraňuje všechny vazby na spoluřešitele. Oprávnění náleží řešiteli, spoluřešiteli, správci, vlastníkovi a administrátorovi.
+- **Osobní řazení úkolů (Personal Task Ordering – STEP 6):**
+  - **Perzistentní model per uživatel:** Samostatná tabulka `user_task_orders` (`id`, `user_id`, `task_id`, `board_id`, `position`, časová razítka) se složeným unikátním indexem `[user_id, task_id]`, indexem pro rychlé dotazování `[board_id, user_id]` a kaskádovými cizími klíči. Zajišťuje striktní izolaci – změna pořadí jednoho uživatele nemá žádný vliv na pořadí jiných uživatelů a nezasahuje do sdílených týmových atributů úkolu (stav, priorita, termín).
+  - **Normalizace pozic:** Celočíselný krok po 1000 (`1000, 2000, 3000...`) v rámci aktivního kontejneru (oblast nebo úkoly bez oblasti). Zabraňuje degradaci přesnosti plovoucí řádové čárky a potřebě složitého rebalancování. Podporuje relativní posuny nahoru (`UP`), dolů (`DOWN`) i cílené umístění před/za referenční úkol (`BEFORE`, `AFTER`).
+  - **Sparse storage a deterministický fallback:** Nově vytvořené nebo dosud nepozicované úkoly nevyžadují okamžitý zápis do DB pro všechny členy. V dotazu `GetBoardTasksUseCase` jsou řazeny deterministicky podle priority (`SPĚCHÁ` > `BĚŽNÁ`), termínu (nejdříve s termínem vzestupně), data vytvoření (`createdAt DESC`) a `id ASC`. Pozicované úkoly mají přednost a řadí se podle osobní `position ASC`.
+  - **Invariant archivu:** Ve filtru `ARCHIVED` je osobní řazení striktně potlačeno – archivované úkoly se vždy řadí chronologicky podle času poslední aktualizace (`updatedAt DESC`).
+  - **Autorizace přes TaskPolicy (`TASK_REORDER`):** Právo na osobní řazení vyžaduje aktivní členství v nástěnce (`OWNER`, `MANAGER`, `MEMBER`) nebo globální roli `ADMIN`.
+  - **UI a ovládací prvky (`TaskCard`):** Přístupná tlačítka pro posun nahoru (`▲`) a dolů (`▼`) s popiskem a klávesovou přístupností, a současně nativní HTML5 Drag & Drop (`draggable`, `onDragStart`, `onDragOver`, `onDrop`) s vizuální indikací přetahování a optimalizací pro rychlou odezvu.
+  - **Kaskádové čištění:** Při smazání úkolu (`DeleteTaskUseCase`), odebrání člena (`RemoveMemberUseCase`) nebo dobrovolném odchodu z nástěnky (`LeaveBoardUseCase`) dochází k automatickému promazání odpovídajících záznamů v `user_task_orders`.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
-- **Databázové migrace:** 2 verzované Drizzle migrace (init schema + Better Auth persistence).
+- **Databázové migrace:** 3 verzované Drizzle migrace (init schema + Better Auth persistence + user_task_orders).
 
 ---
 
@@ -140,10 +148,13 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Správa členů nástěnky (přidání člena, změna role MEMBER ↔ MANAGER s limitem max. 1 správce, odebrání člena s kaskádou úkolů, dobrovolný odchod s přesměrováním na /app).
 - Okamžitá synchronizace přehledu Moje nástěnky (`/app`) po přidání člena.
 - Filtrování úkolů na nástěnce (Aktivní vs. Archivované).
+- Osobní řazení úkolů per uživatel (tlačítka `▲`/`▼` a HTML5 Drag & Drop na kartě úkolu, `reorderTaskAction`, `ReorderTaskUseCase`, tabulka `user_task_orders`).
+- Přísná izolace osobního pořadí (změna pořadí uživatele A neovlivňuje uživatele B ani sdílená týmová data úkolu).
+- Zachování chronologického řazení v archivu úkolů (read-only bypass osobního pořadí).
+- Kaskádové čištění osobních pozic při smazání úkolu, odebrání člena a dobrovolném odchodu z nástěnky.
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
 ### Co ještě není implementováno
-- Personal ordering (osobní řazení úkolů per uživatel).
 - Real-time notifikace, e-mailové notifikace, outbox worker.
 
 ---
@@ -174,9 +185,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly a Správu členství jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání a Správu členství jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B a Board Edit); navazující UI pro osobní řazení úkolů zbývá implementovat v dalším kroku.
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství i Osobní řazení úkolů jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství a Osobní řazení úkolů jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B, STEP 6 a Board Edit).
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (726 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (745 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -185,6 +196,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 30. 9. 2026 | STEP 6 – Personal Ordering (osobní pořadí úkolů per uživatel, tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a nativní HTML5 drag & drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) |
 | 29. 9. 2026 | STEP 5B – Task Status Workflow, Take Over, Participants & Lifecycle UI (TaskCard výběr stavů s completedAt, převzetí úkolu takeOverTaskAction na sebe s vyjmutím ze spoluřešitelů, správa spoluřešitelů připojit se / opustit / odebrat, kontextové menu ⋯ pro archivaci a řízený hard-delete s textem SMAZAT přes DeleteTaskDialog, read-only ochrana archivu, 30 nových testů, 726 celkem) |
 | 29. 9. 2026 | Board Edit – Úprava metadat nástěnky (EditBoardDialog, EditBoardButton, updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository.update, autorizace BOARD_EDIT pro OWNER/MANAGER/ADMIN, ochrana created_by, revalidace detailu i přehledu /app, 32 nových testů, 696 celkem) |
 | 29. 9. 2026 | STEP 5A – Task Edit & Assignee UI (EditTaskDialog, updateTaskAction, changeTaskAssigneeAction, editace údajů úkolu, přiřazení a odebrání řešitele, kaskáda spoluřešitelů, 42 nových testů, 664 celkem) |

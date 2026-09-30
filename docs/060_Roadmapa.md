@@ -36,6 +36,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 5A | Task Edit & Assignee UI (editace základních údajů úkolu na detailu nástěnky přes EditTaskDialog, tlačítko ✏️ na TaskCard, editace názvu, popisu, změna oblasti na existující i Bez oblasti, změna termínu splnění, změna priority BĚŽNÁ/SPĚCHÁ, přiřazení aktivního člena a odebrání řešitele na Nepřiřazeno, kaskáda uvolnění spoluřešitelů při zrušení řešitele, serverová autorizace dle TaskPolicy, cross-board ochrana, 42 nových testů, 664 celkem) | DONE | 29. 9. 2026 |
 | Board Edit | Board Edit UI & Use Case (úprava metadat nástěnky – název a popis přes EditBoardDialog a updateBoardAction, UpdateBoardUseCase, rozšíření BoardRepository o update, autorizace přes BoardPolicy BOARD_EDIT pro OWNER, MANAGER, ADMIN, ochrana boards.created_by, revalidace detailu i /app, 32 nových testů, 696 celkem) | DONE | 29. 9. 2026 |
 | STEP 5B | Task Status Workflow, Take Over, Participants & Lifecycle UI (výběr stavů úkolu NOVÉ / PŘEVZATÉ / ROZPRACOVANÉ / ČEKÁ SE / HOTOVO s automatickým completedAt, převzetí úkolu přes takeOverTaskAction a TakeOverTaskUseCase s vyčištěním ze spoluřešitelů, správa spoluřešitelů – připojení joinTaskAction, odpojení leaveTaskAction a odebrání removeTaskParticipantAction pro řešitele a správu, kontextové menu ⋯ pro archivaci archiveTaskAction a trvalé smazání deleteTaskAction s modálním potvrzením přes přesný text SMAZAT přes DeleteTaskDialog, ochrana read-only pro archivované úkoly dle architektonických pravidel, 30 nových testů, 726 celkem) | DONE | 29. 9. 2026 |
+| STEP 6 (Area & Task) | Personal Ordering (osobní řazení úkolů per uživatel, nová tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a HTML5 Drag & Drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) | DONE | 30. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -168,6 +169,34 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Kaskádové odstranění všech vazeb na spoluřešitele v `task_participants`.
 - **Testy a Quality Gates:** 30 nových unit testů v `tests/unit/task-lifecycle-actions.test.ts`, celkem 726/726 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 6 – Personal Ordering (Dokončeno)
+- **Perzistentní model per uživatel:**
+  - Samostatná databázová tabulka `user_task_orders` (`id`, `user_id`, `task_id`, `board_id`, `position`, `created_at`, `updated_at`).
+  - Složený unikátní index `[user_id, task_id]` zabraňující duplicitním pozicím pro stejnou dvojici.
+  - Index `[board_id, user_id]` optimalizovaný pro rychlé načtení pozic nástěnky konkrétního uživatele v jednom dotazu.
+  - Cizí klíče `user_id`, `task_id`, `board_id` s kaskádovým smazáním (`ON DELETE CASCADE`).
+- **Normalizace pozic a řazení:**
+  - `ReorderTaskUseCase` podporuje relativní posun nahoru (`UP`) a dolů (`DOWN`) i přímé umístění před/za referenční úkol (`BEFORE`, `AFTER`).
+  - Normalizace při každé změně přepočítává celočíselné pozice s rozestupem 1000 (`1000, 2000, 3000...`) v rámci aktivního kontejneru (daná oblast nebo úkoly bez oblasti). Tím zcela eliminuje ztrátu přesnosti plovoucí řádové čárky i nutnost periodického rebalancování.
+- **Sparse storage a deterministický fallback:**
+  - Nově vytvořené a dosud nepřesunuté úkoly nevyžadují zápis do DB pro všechny uživatele.
+  - `GetBoardTasksUseCase` řadí nepozicované úkoly deterministicky: nejprve podle priority (`SPĚCHÁ` před `BĚŽNÁ`), poté podle termínu splnění (nejdříve s termínem vzestupně, bez termínu na konec), data vytvoření (`createdAt DESC`) a ID úkolu.
+  - Pozicované úkoly uživatele jsou řazeny přednostně podle jejich uložené osobní pozice vzestupně.
+- **Invariant archivu:**
+  - Při zobrazení archivu (`filter=ARCHIVED`) se osobní řazení neuplatňuje – archivované úkoly jsou vždy řazeny chronologicky podle času poslední aktualizace (`updatedAt DESC`).
+- **Autorizace a bezpečnost:**
+  - Akce `TASK_REORDER` v `TaskPolicy` povolena pro `OWNER`, `MANAGER`, `MEMBER` i globálního `ADMIN`.
+  - Nečlenové a uživatelé na smazaných nástěnkách jsou striktně odmítnuti.
+  - Cross-user izolace: změna pořadí uživatele A nemá žádný vliv na pořadí úkolů uživatele B.
+  - Změna osobního pořadí nemění žádná sdílená týmová data úkolu (oblast, stav, priorita, řešitel, termín).
+- **UI a ovládací prvky (`TaskCard`):**
+  - Tlačítka posunu nahoru (`▲`) a dolů (`▼`) s popiskem `title` a plnou přístupností.
+  - Nativní HTML5 Drag & Drop (`draggable`, `onDragStart`, `onDragOver`, `onDrop`) s vizuální indikací tažení a optimalizovaným přenosem dat.
+  - Server Action `reorderTaskAction` v `task-actions.ts` s autoritativním získáním `ActorContext` a revalidací cesty.
+- **Kaskádové čištění:**
+  - Při smazání úkolu (`DeleteTaskUseCase`), odebrání člena (`RemoveMemberUseCase`) nebo dobrovolném odchodu z nástěnky (`LeaveBoardUseCase`) se automaticky čistí příslušné záznamy v `user_task_orders`.
+- **Testy a Quality Gates:** 19 nových unit a integračních testů v `tests/unit/personal-task-ordering.test.ts`, celkem 745/745 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -184,8 +213,12 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **STEP 6 (Area & Task) – Personal Ordering:**
-   - Osobní řazení úkolů na nástěnce per uživatel (oddělené od globálního zobrazení).
+1. **Osobní prostor / Moje úkoly (Personal Dashboard):**
+   - Přehled úkolů přihlášeného uživatele agregovaný napříč všemi nástěnkami (řešitel i spoluřešitel).
+2. **Komentáře a diskuze k úkolům:**
+   - Textové komentáře k úkolům, časová osa diskuze a historie aktivit.
+3. **Přílohy k úkolům:**
+   - Správa a nahrávání souborů k úkolům.
 
 ---
 
