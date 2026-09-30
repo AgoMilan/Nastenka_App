@@ -75,7 +75,12 @@ export function LoginForm() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+      <form
+        method="post"
+        onSubmit={handleSubmit}
+        className="space-y-4"
+        noValidate
+      >
         <div>
           <label
             htmlFor="email"
