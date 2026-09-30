@@ -15,6 +15,13 @@
       "when": 1790176676980,
       "tag": "0001_young_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790770877506,
+      "tag": "0002_icy_susan_delgado",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,7 @@ import {
   leaveTaskAction,
   removeTaskParticipantAction,
   archiveTaskAction,
+  reorderTaskAction,
 } from "@/app/(authenticated)/app/board/[boardId]/task-actions.ts";
 
 export interface TaskCardProps {
@@ -141,6 +142,12 @@ export function TaskCard({
 
   // Edit task is allowed for members/admin when not archived
   const canEdit = !isArchived && (isGlobalAdmin || currentUserRole !== null);
+
+  // TASK_REORDER: povoleno všem členům i ADMINovi pro aktivní úkoly na desce
+  const canReorder =
+    !isArchived &&
+    Boolean(boardId) &&
+    (isGlobalAdmin || currentUserRole !== null);
 
   const statusConfig = STATUS_CONFIG[task.status] ?? {
     label: task.status,
@@ -281,12 +288,62 @@ export function TaskCard({
     });
   };
 
+  const handleMove = (direction: "UP" | "DOWN") => {
+    if (!boardId || !canReorder || isPending) return;
+    setActionError(null);
+
+    const formData = new FormData();
+    formData.append("boardId", boardId);
+    formData.append("taskId", task.id);
+    formData.append("direction", direction);
+
+    startTransition(async () => {
+      const res = await reorderTaskAction(null, formData);
+      if (!res.success && res.error) {
+        setActionError(res.error);
+      }
+    });
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!boardId || !canReorder || isPending) return;
+    const sourceTaskId = e.dataTransfer.getData("text/plain");
+    if (!sourceTaskId || sourceTaskId === task.id) return;
+
+    setActionError(null);
+    const formData = new FormData();
+    formData.append("boardId", boardId);
+    formData.append("taskId", sourceTaskId);
+    formData.append("targetTaskId", task.id);
+    formData.append("position", "BEFORE");
+
+    startTransition(async () => {
+      const res = await reorderTaskAction(null, formData);
+      if (!res.success && res.error) {
+        setActionError(res.error);
+      }
+    });
+  };
+
   return (
     <>
       <article
+        draggable={canReorder}
+        onDragStart={(e) => {
+          if (!canReorder) return;
+          e.dataTransfer.setData("text/plain", task.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragOver={(e) => {
+          if (!canReorder) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        }}
+        onDrop={handleDrop}
         className={`relative rounded-lg border border-zinc-200 bg-white p-3.5 shadow-2xs transition-shadow hover:shadow-xs text-left ${
-          isPending ? "opacity-70 pointer-events-none" : ""
-        }`}
+          canReorder ? "cursor-grab active:cursor-grabbing" : ""
+        } ${isPending ? "opacity-70 pointer-events-none" : ""}`}
         aria-labelledby={`task-title-${task.id}`}
       >
         {/* Chybová zpráva akce */}
@@ -372,6 +429,32 @@ export function TaskCard({
 
           {/* Ovládací prvky vpravo nahoře */}
           <div className="flex items-center gap-1">
+            {/* Osobní pořadí: Posunout nahoru / dolů */}
+            {canReorder && (
+              <div className="flex items-center gap-0.5 border-r border-zinc-200 pr-1 mr-0.5">
+                <button
+                  type="button"
+                  onClick={() => handleMove("UP")}
+                  disabled={isPending}
+                  className="rounded p-1 text-xs text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors disabled:opacity-40"
+                  title="Posunout úkol nahoru v mém pořadí"
+                  aria-label="Posunout úkol nahoru"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMove("DOWN")}
+                  disabled={isPending}
+                  className="rounded p-1 text-xs text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors disabled:opacity-40"
+                  title="Posunout úkol dolů v mém pořadí"
+                  aria-label="Posunout úkol dolů"
+                >
+                  ▼
+                </button>
+              </div>
+            )}
+
             {canEdit && boardId && (
               <button
                 type="button"

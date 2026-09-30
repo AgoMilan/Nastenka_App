@@ -236,6 +236,11 @@ export function checkTaskPermission(
       }
       return deny("INSUFFICIENT_ROLE");
 
+    // ── TASK_REORDER ────────────────────────────────────────
+    // Změna osobního pořadí: dostupné všem členům Nástěnky i ADMINovi pro vlastní profil.
+    case "TASK_REORDER":
+      return ALLOW;
+
     // ── Exhaustiveness check ─────────────────────────────────
     default: {
       const _exhaustiveCheck: never = action;

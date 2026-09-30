@@ -67,7 +67,13 @@ export class LeaveBoardUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const output = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({
+          boards,
+          memberships,
+          tasks,
+          taskParticipants,
+          userTaskOrders,
+        }) => {
           // A. Načtení Nástěnky s uzamčením pro souběh
           const board = await boards.findByIdForUpdate(boardId);
           if (!board) {
@@ -144,6 +150,14 @@ export class LeaveBoardUseCase {
                 );
               }
             }
+          }
+
+          // F. Vyčištění osobního pořadí úkolů odcházejícího uživatele
+          if (userTaskOrders) {
+            await userTaskOrders.deleteByBoardAndUser(
+              boardId,
+              actor.actor_user_id,
+            );
           }
 
           return {

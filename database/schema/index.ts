@@ -25,6 +25,12 @@ export {
 } from "./task-participants.ts";
 
 export {
+  userTaskOrders,
+  type UserTaskOrderSelect,
+  type UserTaskOrderInsert,
+} from "./user-task-orders.ts";
+
+export {
   auditLogs,
   type AuditLogSelect,
   type AuditLogInsert,
@@ -69,4 +75,5 @@ export {
   outboxRelations,
   sessionsRelations,
   accountsRelations,
+  userTaskOrdersRelations,
 } from "./relations.ts";

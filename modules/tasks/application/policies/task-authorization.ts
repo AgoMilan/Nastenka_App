@@ -71,7 +71,8 @@ export type TaskAction =
   | "TASK_CHANGE_AREA"
   | "TASK_CHANGE_DUE_DATE"
   | "TASK_ARCHIVE"
-  | "TASK_DELETE";
+  | "TASK_DELETE"
+  | "TASK_REORDER";
 
 // ─────────────────────────────────────────────────────────────
 // Task Deny Reasons a Result

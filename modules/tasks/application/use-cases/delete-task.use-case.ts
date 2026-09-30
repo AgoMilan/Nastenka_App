@@ -64,7 +64,13 @@ export class DeleteTaskUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({
+          boards,
+          memberships,
+          tasks,
+          taskParticipants,
+          userTaskOrders,
+        }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -145,6 +151,9 @@ export class DeleteTaskUseCase {
           }
 
           // F. Řízený hard-delete úkolu
+          if (userTaskOrders) {
+            await userTaskOrders.deleteByTaskId(task.id);
+          }
           await tasks.delete(task.id);
         },
       );

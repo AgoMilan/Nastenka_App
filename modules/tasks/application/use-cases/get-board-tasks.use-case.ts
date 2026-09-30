@@ -21,6 +21,7 @@ import type {
   TaskPriority,
   TaskRepository,
   TaskStatus,
+  UserTaskOrderRepository,
 } from "../ports/index.ts";
 
 export type TaskFilterMode = "ACTIVE" | "ARCHIVED" | "ALL";
@@ -93,6 +94,7 @@ export class GetBoardTasksUseCase {
   private readonly taskParticipantRepo: TaskParticipantRepository;
   private readonly areaRepo: AreaRepository;
   private readonly userRepo: UserRepository;
+  private readonly userTaskOrderRepo?: UserTaskOrderRepository;
 
   constructor(
     boardRepo: BoardRepository,
@@ -101,6 +103,7 @@ export class GetBoardTasksUseCase {
     taskParticipantRepo: TaskParticipantRepository,
     areaRepo: AreaRepository,
     userRepo: UserRepository,
+    userTaskOrderRepo?: UserTaskOrderRepository,
   ) {
     this.boardRepo = boardRepo;
     this.membershipRepo = membershipRepo;
@@ -108,6 +111,7 @@ export class GetBoardTasksUseCase {
     this.taskParticipantRepo = taskParticipantRepo;
     this.areaRepo = areaRepo;
     this.userRepo = userRepo;
+    this.userTaskOrderRepo = userTaskOrderRepo;
   }
 
   async execute(
@@ -261,14 +265,46 @@ export class GetBoardTasksUseCase {
       };
     });
 
-    // ── 12. Deterministické seřazení ───────────────────────────
+    // ── 12. Seřazení úkolů (Osobní pořadí / Archivní chronologie / Výchozí fallback) ─
+    if (filter === "ARCHIVED") {
+      // Archiv: chronologicky podle data archivace/aktualizace (DESC)
+      taskViews.sort((a, b) => {
+        const updatedDiff = b.updatedAt.getTime() - a.updatedAt.getTime();
+        if (updatedDiff !== 0) return updatedDiff;
+        return a.id.localeCompare(b.id);
+      });
+      return ok(taskViews);
+    }
+
+    let orderMap = new Map<string, number>();
+    if (this.userTaskOrderRepo) {
+      const userOrders = await this.userTaskOrderRepo.findByBoardAndUser(
+        trimmedBoardId,
+        actor.actor_user_id,
+      );
+      orderMap = new Map(userOrders.map((o) => [o.taskId, o.position]));
+    }
+
     taskViews.sort((a, b) => {
-      // 1. Priorita: SPĚCHÁ (1) před BĚŽNÁ (2)
+      // 1. Osobní pořadí přihlášeného uživatele (pokud existuje)
+      const posA = orderMap.get(a.id);
+      const posB = orderMap.get(b.id);
+
+      if (posA !== undefined && posB !== undefined) {
+        if (posA !== posB) return posA - posB;
+      } else if (posA !== undefined && posB === undefined) {
+        return -1;
+      } else if (posA === undefined && posB !== undefined) {
+        return 1;
+      }
+
+      // 2. Deterministické výchozí seřazení pro neuspořádané úkoly:
+      // Priorita: SPĚCHÁ (1) před BĚŽNÁ (2)
       const pA = a.priority === "SPĚCHÁ" ? 1 : 2;
       const pB = b.priority === "SPĚCHÁ" ? 1 : 2;
       if (pA !== pB) return pA - pB;
 
-      // 2. Termín (dueDate): dřívější dříve, nulls last
+      // Termín (dueDate): dřívější dříve, nulls last
       if (a.dueDate !== null && b.dueDate !== null) {
         const timeDiff = a.dueDate.getTime() - b.dueDate.getTime();
         if (timeDiff !== 0) return timeDiff;
@@ -278,11 +314,11 @@ export class GetBoardTasksUseCase {
         return 1;
       }
 
-      // 3. Vytvořeno (createdAt): novější dříve (DESC)
+      // Vytvořeno (createdAt): novější dříve (DESC)
       const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
       if (createdDiff !== 0) return createdDiff;
 
-      // 4. Deterministický fallback na ID
+      // Deterministický fallback na ID
       return a.id.localeCompare(b.id);
     });
 

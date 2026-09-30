@@ -16,6 +16,7 @@ import type { AreaRepository } from "../../../areas/application/ports/area-repos
 import type {
   TaskRepository,
   TaskParticipantRepository,
+  UserTaskOrderRepository,
 } from "../../../tasks/application/ports/index.ts";
 
 export interface UnitOfWorkRepositories {
@@ -25,6 +26,7 @@ export interface UnitOfWorkRepositories {
   readonly areas?: AreaRepository;
   readonly tasks?: TaskRepository;
   readonly taskParticipants?: TaskParticipantRepository;
+  readonly userTaskOrders?: UserTaskOrderRepository;
 }
 
 export interface UnitOfWork {

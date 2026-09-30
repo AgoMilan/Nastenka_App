@@ -20,6 +20,7 @@ import {
   RemoveTaskParticipantUseCase,
   ArchiveTaskUseCase,
   DeleteTaskUseCase,
+  ReorderTaskUseCase,
 } from "@/modules/tasks/application/use-cases/index.ts";
 import {
   createTaskSchema,
@@ -32,6 +33,7 @@ import {
   removeTaskParticipantSchema,
   archiveTaskSchema,
   deleteTaskSchema,
+  reorderTaskSchema,
 } from "@/modules/tasks/api/dto/task.dto.ts";
 
 export interface TaskActionState {
@@ -972,3 +974,85 @@ export async function deleteTaskAction(
     taskId: parsed.data.taskId,
   };
 }
+
+/**
+ * Server Action pro změnu osobního pořadí úkolů (ReorderTask).
+ *
+ * Invarianty (STEP 6 – Personal Ordering):
+ * 1. ActorContext je získáván výhradně ze serverové session (nikdy z parametrů klienta).
+ * 2. Vstup je autoritativně validován pomocí Zod schématu (reorderTaskSchema).
+ * 3. Změna ovlivní výhradně profil přihlášeného uživatele (žádný cross-user dopad).
+ * 4. Use Case ověřuje oprávnění přes TaskPolicy (TASK_REORDER).
+ * 5. Provádí cross-board kontrolu (taskId musí patřit do boardId).
+ * 6. Po úspěchu revaliduje cestu /app/board/[boardId].
+ */
+export async function reorderTaskAction(
+  prevState: TaskActionState | null,
+  formData: FormData,
+): Promise<TaskActionState> {
+  const headersList = await headers();
+  const actor = await resolveActorContext(headersList);
+
+  if (!actor || !actor.is_active) {
+    return {
+      success: false,
+      error: "Uživatel není přihlášen nebo je účet neaktivní.",
+    };
+  }
+
+  const rawBoardId = formData.get("boardId");
+  const rawTaskId = formData.get("taskId");
+  const rawDirection = formData.get("direction");
+  const rawTargetTaskId = formData.get("targetTaskId");
+  const rawPosition = formData.get("position");
+
+  const parsed = reorderTaskSchema.safeParse({
+    boardId: typeof rawBoardId === "string" ? rawBoardId : "",
+    taskId: typeof rawTaskId === "string" ? rawTaskId : "",
+    direction:
+      rawDirection === "UP" || rawDirection === "DOWN"
+        ? rawDirection
+        : undefined,
+    targetTaskId:
+      typeof rawTargetTaskId === "string" && rawTargetTaskId.trim() !== ""
+        ? rawTargetTaskId.trim()
+        : undefined,
+    position:
+      rawPosition === "BEFORE" || rawPosition === "AFTER"
+        ? rawPosition
+        : undefined,
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Neplatný vstup požadavku.",
+    };
+  }
+
+  const db = getDb();
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new ReorderTaskUseCase(uow);
+
+  const result = await useCase.execute(actor, {
+    boardId: parsed.data.boardId,
+    taskId: parsed.data.taskId,
+    direction: parsed.data.direction,
+    targetTaskId: parsed.data.targetTaskId,
+    position: parsed.data.position,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.message,
+    };
+  }
+
+  revalidatePath(`/app/board/${parsed.data.boardId}`);
+  return {
+    success: true,
+    taskId: parsed.data.taskId,
+  };
+}
+

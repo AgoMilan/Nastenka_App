@@ -71,7 +71,13 @@ export class RemoveMemberUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const output = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({
+          boards,
+          memberships,
+          tasks,
+          taskParticipants,
+          userTaskOrders,
+        }) => {
           // A. Načtení Nástěnky s uzamčením pro souběh
           const board = await boards.findByIdForUpdate(boardId);
           if (!board) {
@@ -155,6 +161,11 @@ export class RemoveMemberUseCase {
                 await taskParticipants.removeParticipant(t.id, targetUserId);
               }
             }
+          }
+
+          // H. Vyčištění osobního pořadí úkolů odebraného člena
+          if (userTaskOrders) {
+            await userTaskOrders.deleteByBoardAndUser(boardId, targetUserId);
           }
 
           return {

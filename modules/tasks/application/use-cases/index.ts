@@ -70,3 +70,9 @@ export {
   type TaskFilterMode,
   type GetBoardTasksOptions,
 } from "./get-board-tasks.use-case.ts";
+
+export {
+  ReorderTaskUseCase,
+  type ReorderTaskInput,
+  type ReorderTaskOutput,
+} from "./reorder-task.use-case.ts";

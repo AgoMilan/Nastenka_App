@@ -7,6 +7,7 @@ import { memberships } from "./memberships.ts";
 import { areas } from "./areas.ts";
 import { tasks } from "./tasks.ts";
 import { taskParticipants } from "./task-participants.ts";
+import { userTaskOrders } from "./user-task-orders.ts";
 import { auditLogs } from "./audit-logs.ts";
 import { notifications } from "./notifications.ts";
 import { outbox } from "./outbox.ts";
@@ -167,3 +168,25 @@ export const accountsRelations = relations(accounts, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+/**
+ * Relační vazby pro osobní pořadí úkolů (UserTaskOrder).
+ */
+export const userTaskOrdersRelations = relations(
+  userTaskOrders,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [userTaskOrders.userId],
+      references: [users.id],
+    }),
+    task: one(tasks, {
+      fields: [userTaskOrders.taskId],
+      references: [tasks.id],
+    }),
+    board: one(boards, {
+      fields: [userTaskOrders.boardId],
+      references: [boards.id],
+    }),
+  }),
+);
+

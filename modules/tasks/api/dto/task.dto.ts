@@ -226,3 +226,30 @@ export const deleteTaskSchema = z.object({
 });
 
 export type DeleteTaskDto = z.infer<typeof deleteTaskSchema>;
+
+export const reorderTaskSchema = z
+  .object({
+    boardId: z
+      .string({ required_error: "ID Nástěnky je povinné" })
+      .trim()
+      .min(1, "ID Nástěnky nesmí být prázdné"),
+    taskId: z
+      .string({ required_error: "ID úkolu je povinné" })
+      .trim()
+      .min(1, "ID úkolu nesmí být prázdné"),
+    direction: z.enum(["UP", "DOWN"]).optional(),
+    targetTaskId: z.string().trim().min(1).optional(),
+    position: z.enum(["BEFORE", "AFTER"]).optional(),
+  })
+  .refine(
+    (data) =>
+      data.direction !== undefined ||
+      (data.targetTaskId !== undefined && data.position !== undefined),
+    {
+      message:
+        "Musí být zadán směr (direction) nebo cílový úkol s pozicí (targetTaskId, position).",
+    },
+  );
+
+export type ReorderTaskDto = z.infer<typeof reorderTaskSchema>;
+
