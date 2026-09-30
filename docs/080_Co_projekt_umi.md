@@ -23,7 +23,7 @@ Nástěnka je modulární monolit postavený na Next.js 16 (App Router), TypeScr
 
 Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
-- **Databázové schéma (Drizzle ORM):** 13 tabulek – `users`, `boards`, `memberships`, `areas`, `tasks`, `task_participants`, `user_task_orders`, `audit_logs`, `notifications`, `outbox`, `sessions`, `accounts`, `verifications`.
+- **Databázové schéma (Drizzle ORM):** 14 tabulek – `users`, `boards`, `memberships`, `areas`, `tasks`, `task_participants`, `user_task_orders`, `task_comments`, `audit_logs`, `notifications`, `outbox`, `sessions`, `accounts`, `verifications`.
 - **Better Auth – serverová autentizace:** Integrace Better Auth 1.7.5 s Drizzle adaptérem, lazy inicializace, e-mail/heslo přihlašování.
 - **ActorContext:** Server-side `resolveActorContext()` sestavuje bezpečný kontext volajícího (actor_user_id, global_role, session_id, is_active) z live DB stavu. Vrací `null` pro neaktivní nebo soft-deleted uživatele.
 - **Board Authorization Policy Engine:** `checkBoardPermission()` vyhodnocuje Board-level oprávnění na základě ActorContext a členství. Implementuje explicitní autorizační matici (ALLOW/DENY s důvody), ADMIN bypass, soft-delete guard a 401 vs 403 rozlišení.
@@ -123,8 +123,20 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Zachování osobního řazení:** V rámci každé skupiny nástěnky se uplatňuje osobní pořadí přihlášeného uživatele (`user_task_orders.position ASC`) s deterministickým fallbackem pro nepozicované úkoly (`SPĚCHÁ` > `BĚŽNÁ`, termín vzestupně, `createdAt DESC`, `id ASC`).
   - **Navigace (`AppHeader`):** Společná hlavička propojující `Moje nástěnky` (`/app`) a `Moje úkoly` (`/app/my-work`).
   - **Backend & Repozitář:** Metoda `findUserTasksAcrossBoards` v `DrizzleTaskRepository` s optimalizovaným SQL poddotazem do `task_participants`, omezující vyhledávání pouze na autorizované aktivní nástěnky z `BoardRepository` (`findActiveBoardsForUser` / `findActiveBoardsForAdmin`). Administrátor (`ADMIN`) vidí v tomto osobním přehledu pouze úkoly, kde je sám řešitelem nebo spoluřešitelem.
+- **Komentáře a diskuze k úkolům (STEP 8):**
+  - **Uživatelská diskuze k úkolům:** Komplexní podpora pro komentování a diskuzi nad jednotlivými úkoly na detailu nástěnky i v přehledu Moje úkoly.
+  - **Databázový model & integrita:** Samostatná tabulka `task_comments` s primárním klíčem UUID, cizím klíčem na úkol `task_id` s kaskádovým smazáním (`ON DELETE CASCADE`), cizím klíčem na autora `author_id` s ochranou proti smazání (`ON DELETE RESTRICT`), textovým obsahem `content` (1–5000 znaků po ořezu mezer), časovými razítky vytvoření a aktualizace, složeným indexem `[task_id, created_at]` pro efektivní chronologické čtení diskuze a indexem `[author_id]`.
+  - **Repozitář a transakční Unit of Work:** Port `TaskCommentRepository` a implementace `DrizzleTaskCommentRepository` začleněná do `DrizzleUnitOfWork` pro atomické transakční operace. Podpora dávkového počítání komentářů `countByTaskIds` eliminující N+1 dotazy při načítání úkolů nástěnky nebo osobního workspace.
+  - **Author-only autorizační model bez moderačních výjimek:**
+    - `TASK_COMMENT_VIEW`: Povoleno pro všechny aktivní členy nástěnky (`OWNER`, `MANAGER`, `MEMBER`) i systémového administrátora (`ADMIN`).
+    - `TASK_COMMENT_CREATE`: Povoleno členům nástěnky a administrátorovi u nearchivovaných úkolů.
+    - `TASK_COMMENT_EDIT_OWN` a `TASK_COMMENT_DELETE_OWN`: Vyhrazeno **výhradně autorovi daného komentáře** (`comment.authorId === actor.actor_user_id`). Ani vlastník nástěnky (`OWNER`), provozní správce (`MANAGER`) ani globální administrátor (`ADMIN`) nemají moderační výjimku měnit či mazat cizí komentáře (`deny("NOT_COMMENT_AUTHOR")`).
+  - **Striktní ochrana archivu (Read-Only):** Pokud je úkol ve stavu `ARCHIVOVÁNO`, veškeré zápisové operace s komentáři (přidání, editace, smazání) jsou striktně odmítnuty chybou `AuthorizationError (TASK_ARCHIVED)` i pro autora komentáře a administrátora. Čtení existující diskuze zůstává zachováno.
+  - **Aplikační use cases:** `GetTaskCommentsUseCase` (chronologické seřazení komentářů, dávkové doplnění autorů bez N+1, autorizační příznaky `canEdit`/`canDelete`, indikátor archivovaného úkolu), `AddTaskCommentUseCase` (Zod validace 1–5000 znaků, autorizace), `UpdateTaskCommentUseCase` (autorská kontrola, aktualizace obsahu a časového razítka `updatedAt`), `DeleteTaskCommentUseCase` (autorská kontrola, odstranění záznamu).
+  - **Server Actions & Dialog (`TaskCommentsDialog`):** Server Actions v `comment-actions.ts` se serverovým `ActorContextem` a revalidací cesty `/app/board/[boardId]`. Modální dialog s dynamickým scrollováním na nejnovější komentář, počítadlem znaků, zkratkou Ctrl+Enter, inline editací s ukládáním i rušením, potvrzovacím dialogem před smazáním komentáře a informačním pruhem u archivovaných úkolů (*„Diskuze je uzamčena pro čtení.“*).
+  - **Vizuální indikátory a počítadla:** Dynamické počítadlo komentářů s tlačítkem otevření diskuze přímo na `TaskCard` (`💬 X komentářů`) a kompaktní odznak počtu komentářů na `MyTaskCard` v přehledu Moje úkoly.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
-- **Databázové migrace:** 3 verzované Drizzle migrace (init schema + Better Auth persistence + user_task_orders).
+- **Databázové migrace:** 4 verzované Drizzle migrace (init schema + Better Auth persistence + user_task_orders + task_comments).
 
 ---
 
@@ -169,6 +181,12 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Přísná izolace osobního pořadí (změna pořadí uživatele A neovlivňuje uživatele B ani sdílená týmová data úkolu).
 - Zachování chronologického řazení v archivu úkolů (read-only bypass osobního pořadí).
 - Kaskádové čištění osobních pozic při smazání úkolu, odebrání člena a dobrovolném odchodu z nástěnky.
+- Komentáře a diskuze k úkolům (`TaskCommentsDialog`, `comment-actions.ts`, tabulka `task_comments`).
+- Přidání nového komentáře (1–5000 znaků) s odesláním přes tlačítko i klávesovou zkratkou Ctrl+Enter.
+- Author-only úprava a smazání vlastního komentáře (výhradně autor, bez moderační výjimky i pro OWNER, MANAGER a ADMIN).
+- Ochrana diskuze u archivovaných úkolů (striktní read-only stav pro komentáře, zákaz přidávání, editace i mazání).
+- Počítadlo komentářů na kartě úkolu (`TaskCard`) i v osobním přehledu `MyTaskCard` (optimalizované dávkové počítání `countByTaskIds`).
+- Kaskádové smazání komentářů při odstranění úkolu.
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
 ### Co ještě není implementováno
@@ -202,9 +220,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů i Osobní pracovní prostor Moje úkoly jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů i Osobní prostor Moje úkoly jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B, STEP 6, STEP 7 a Board Edit).
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly i Komentáře a diskuzi k úkolům jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly i Komentáře a diskuzi k úkolům jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B, STEP 6, STEP 7, STEP 8 a Board Edit).
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (766 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (792 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -213,6 +231,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 30. 9. 2026 | STEP 8 – Komentáře a diskuze k úkolům (uživatelská diskuze u úkolů, dialog TaskCommentsDialog, počítadlo komentářů na TaskCard a MyTaskCard, author-only editace a mazání bez výjimek i pro ADMIN/OWNER/MANAGER, striktní read-only režim pro archivované úkoly, tabulka task_comments s kaskádovým smazáním, TaskCommentRepository, transakční DrizzleUnitOfWork integrace, dávkový countByTaskIds, 26 nových testů, 792 celkem) |
 | 30. 9. 2026 | STEP 7 – Osobní pracovní prostor „Moje úkoly“ (/app/my-work agregující úkoly přihlášeného uživatele napříč všemi aktivními nástěnkami pro ASSIGNEE a PARTICIPANT s vyloučením pouhého created_by, precedence ASSIGNEE, filtry stavů ACTIVE [bez HOTOVO] / COMPLETED [HOTOVO] / ARCHIVED / ALL, filtry rolí ALL / ASSIGNEE / PARTICIPANT, seskupení podle nástěnek s počítadly a odkazy, zachování osobního řazení uvnitř nástěnek, navigace AppHeader, DrizzleTaskRepository.findUserTasksAcrossBoards, GetMyTasksUseCase, 21 nových testů, 766 celkem) |
 | 30. 9. 2026 | STEP 6 – Personal Ordering (osobní pořadí úkolů per uživatel, tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a nativní HTML5 drag & drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) |
 | 29. 9. 2026 | STEP 5B – Task Status Workflow, Take Over, Participants & Lifecycle UI (TaskCard výběr stavů s completedAt, převzetí úkolu takeOverTaskAction na sebe s vyjmutím ze spoluřešitelů, správa spoluřešitelů připojit se / opustit / odebrat, kontextové menu ⋯ pro archivaci a řízený hard-delete s textem SMAZAT přes DeleteTaskDialog, read-only ochrana archivu, 30 nových testů, 726 celkem) |

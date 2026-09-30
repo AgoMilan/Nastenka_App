@@ -38,6 +38,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 5B | Task Status Workflow, Take Over, Participants & Lifecycle UI (výběr stavů úkolu NOVÉ / PŘEVZATÉ / ROZPRACOVANÉ / ČEKÁ SE / HOTOVO s automatickým completedAt, převzetí úkolu přes takeOverTaskAction a TakeOverTaskUseCase s vyčištěním ze spoluřešitelů, správa spoluřešitelů – připojení joinTaskAction, odpojení leaveTaskAction a odebrání removeTaskParticipantAction pro řešitele a správu, kontextové menu ⋯ pro archivaci archiveTaskAction a trvalé smazání deleteTaskAction s modálním potvrzením přes přesný text SMAZAT přes DeleteTaskDialog, ochrana read-only pro archivované úkoly dle architektonických pravidel, 30 nových testů, 726 celkem) | DONE | 29. 9. 2026 |
 | STEP 6 (Area & Task) | Personal Ordering (osobní řazení úkolů per uživatel, nová tabulka user_task_orders se složeným unikátním indexem [user_id, task_id], ReorderTaskUseCase s normalizací pozic po 1000, integrace do GetBoardTasksUseCase s deterministickým fallbackem pro nepozicované úkoly, read-only chronologický bypass pro archiv, tlačítka ▲/▼ a HTML5 Drag & Drop na TaskCard, TASK_REORDER v TaskPolicy pro členy a ADMINa, kaskádový cleanup při smazání úkolu/členství, 19 nových testů, 745 celkem) | DONE | 30. 9. 2026 |
 | STEP 7 | Osobní pracovní prostor „Moje úkoly“ (/app/my-work agregace úkolů napříč aktivními nástěnkami uživatele kde je ASSIGNEE nebo PARTICIPANT, vyloučení pouhého created_by, precedence ASSIGNEE, filtry stavů s vyčleněním HOTOVO z ACTIVE, filtry rolí ALL/ASSIGNEE/PARTICIPANT, seskupení dle nástěnek s počítadlem a proklikem, zachování osobního řazení v rámci nástěnek, AppHeader navigace, GetMyTasksUseCase, findUserTasksAcrossBoards, 21 nových testů, 766 celkem) | DONE | 30. 9. 2026 |
+| STEP 8 | Komentáře a diskuze k úkolům (uživatelská diskuze u úkolů, tabulka task_comments, TaskCommentRepository a transakční UnitOfWork, author-only editace a mazání bez výjimek i pro ADMIN/OWNER/MANAGER, striktní read-only režim pro archivované úkoly, kaskádový delete při smazání úkolu, dávkový countByTaskIds, TaskCommentsDialog, počítadlo komentářů na TaskCard a MyTaskCard, 26 nových testů, 792 celkem) | DONE | 30. 9. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -234,6 +235,34 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Implementace use casu `GetMyTasksUseCase` v aplikační vrstvě s obohacením o `boardName`, `areaName`, `userRole` a aplikací filtrů a řazení.
 - **Testy a Quality Gates:** 21 nových unit a integračních testů v `tests/unit/my-tasks.test.ts`, celkem 766/766 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 8 – Komentáře a diskuze k úkolům (Dokončeno)
+- **Databázový model & migrace:**
+  - Samostatná databázová tabulka `task_comments` (`id` UUID PK, `task_id` UUID FK s `ON DELETE CASCADE`, `author_id` UUID FK s `ON DELETE RESTRICT`, `content` TEXT NOT NULL, `created_at` TIMESTAMPTZ, `updated_at` TIMESTAMPTZ).
+  - Složený index `[task_id, created_at]` pro rychlé a deterministické načtení diskuze konkrétního úkolu chronologicky.
+  - Index `[author_id]` pro integritu autorství a dohledatelnost komentářů.
+  - Verzovaná Drizzle migrace `0003_lethal_galactus.sql` včetně odpovídajícího snapshotu v žurnálu.
+- **Repozitář & Transakční UnitOfWork:**
+  - Port `TaskCommentRepository` (`findById`, `findByTaskId`, `countByTaskIds`, `create`, `update`, `delete`, `deleteByTaskId`) definovaný v aplikační vrstvě úkolů.
+  - Drizzle implementace `DrizzleTaskCommentRepository` registrovaná v `DrizzleUnitOfWork` pro plnou transakční bezpečnost a rollback při chybách.
+  - Dávková metoda `countByTaskIds` pro načtení počtu komentářů pro sadu úkolů v jediném SQL dotazu bez N+1 zátěže.
+- **Autorizační Policy Engine (TaskPolicy & TaskAuthorization):**
+  - Nová práva: `TASK_COMMENT_VIEW`, `TASK_COMMENT_CREATE`, `TASK_COMMENT_EDIT_OWN`, `TASK_COMMENT_DELETE_OWN`.
+  - **Author-only pravidlo bez výjimek:** Pouze autor komentáře (`comment.authorId === actor.actor_user_id`) smí svůj komentář upravit nebo smazat. Vlastník nástěnky (`OWNER`), správce (`MANAGER`) ani globální administrátor (`ADMIN`) nemají moderační výjimku měnit či mazat cizí komentáře (`NOT_COMMENT_AUTHOR`).
+  - **Striktní read-only režim pro archiv:** U archivovaného úkolu (`task.status === "ARCHIVOVÁNO"`) jsou všechny zápisové operace s komentáři zakázány (`TASK_ARCHIVED`) i pro autora i pro ADMINa. Čtení komentářů zůstává plně povolené.
+  - Zákaz operací pro nečleny nástěnky a soft-deleted entity (`BOARD_DELETED`).
+- **Aplikační vrstva & Use Cases:**
+  - `GetTaskCommentsUseCase`: autorizované načtení komentářů k úkolu seřazených chronologicky (`createdAt ASC`), dávkové načtení autorů přes `UserRepository.findByIds`, obohacení o jméno a e-mail autora, příznaky `canEdit` a `canDelete` pro aktuálního aktéra, detekce `isArchived`.
+  - `AddTaskCommentUseCase`: validace obsahu (1–5000 znaků po trimu, Zod schéma), autorizace přes `TaskPolicy`, transakční uložení.
+  - `UpdateTaskCommentUseCase`: ověření autorského práva, aktualizace obsahu a časového razítka `updatedAt`.
+  - `DeleteTaskCommentUseCase`: ověření autorského práva, smazání komentáře z DB.
+  - Obohacení `GetBoardTasksUseCase` a `GetMyTasksUseCase` o `commentsCount` pomocí dávkového volání `taskCommentRepo.countByTaskIds()`.
+- **Server Actions & UI komponenty:**
+  - Server Actions v `app/(authenticated)/app/board/[boardId]/comment-actions.ts`: `getTaskCommentsAction`, `addTaskCommentAction`, `updateTaskCommentAction`, `deleteTaskCommentAction`. Autoritativní serverový `ActorContext`, validace vstupů, revalidace cesty `/app/board/[boardId]`.
+  - Modální dialog `TaskCommentsDialog`: responzivní design, automatické scrollování na nejnovější komentář, formulář pro přidání komentáře s počítadlem znaků a klávesovou zkratkou (Ctrl+Enter), inline editace komentáře s ukládáním i rušením, kontextové smazání s potvrzovacím dialogem, vizuální označení `(upraveno)` u editovaných komentářů a informační banner při archivovaném úkolu (*„Diskuze je uzamčena pro čtení.“*).
+  - Tlačítko na `TaskCard` s dynamickým počítadlem komentářů (`💬 X komentářů`).
+  - Odznak s počtem komentářů na kartě úkolu v osobním přehledu `MyTaskCard`.
+- **Testy a Quality Gates:** 26 nových unit testů v `tests/unit/task-comments.test.ts`, celkem 792/792 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -250,10 +279,10 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **Komentáře a diskuze k úkolům:**
-   - Textové komentáře k úkolům, časová osa diskuze a historie aktivit.
-2. **Přílohy k úkolům:**
+1. **Přílohy k úkolům:**
    - Správa a nahrávání souborů k úkolům.
+2. **Historie aktivit a auditní stopa:**
+   - Časová osa změn úkolů (změny stavů, řešitelů, termínů).
 
 ---
 
