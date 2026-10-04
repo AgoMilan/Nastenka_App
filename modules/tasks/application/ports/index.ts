@@ -24,3 +24,10 @@ export type {
   UpdateTaskCommentData,
   TaskCommentRepository,
 } from "./task-comment-repository.port.ts";
+
+export type {
+  UserTaskNoteRecord,
+  UpsertUserTaskNoteData,
+  UserTaskNoteRepository,
+} from "./user-task-note-repository.port.ts";
+

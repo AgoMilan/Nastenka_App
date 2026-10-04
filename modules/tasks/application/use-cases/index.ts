@@ -107,3 +107,20 @@ export {
   type DeleteTaskCommentInput,
 } from "./delete-task-comment.use-case.ts";
 
+export {
+  GetUserTaskNoteUseCase,
+  type GetUserTaskNoteInput,
+  type UserTaskNoteView,
+} from "./get-user-task-note.use-case.ts";
+
+export {
+  UpsertUserTaskNoteUseCase,
+  type UpsertUserTaskNoteInput,
+} from "./upsert-user-task-note.use-case.ts";
+
+export {
+  DeleteUserTaskNoteUseCase,
+  type DeleteUserTaskNoteInput,
+} from "./delete-user-task-note.use-case.ts";
+
+

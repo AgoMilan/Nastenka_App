@@ -76,7 +76,10 @@ export type TaskAction =
   | "TASK_COMMENT_VIEW"
   | "TASK_COMMENT_CREATE"
   | "TASK_COMMENT_EDIT_OWN"
-  | "TASK_COMMENT_DELETE_OWN";
+  | "TASK_COMMENT_DELETE_OWN"
+  | "TASK_PRIVATE_NOTE_VIEW_OWN"
+  | "TASK_PRIVATE_NOTE_UPSERT_OWN"
+  | "TASK_PRIVATE_NOTE_DELETE_OWN";
 
 // ─────────────────────────────────────────────────────────────
 // Task Deny Reasons a Result
@@ -88,7 +91,8 @@ export type TaskDenyReason =
   | "TASK_HAS_NO_ASSIGNEE"
   | "CANNOT_LEAVE_OTHER_PARTICIPANT"
   | "TASK_ARCHIVED"
-  | "NOT_COMMENT_AUTHOR";
+  | "NOT_COMMENT_AUTHOR"
+  | "NOT_NOTE_OWNER";
 
 export type TaskAuthorizationResult =
   | { readonly allowed: true }
@@ -162,6 +166,11 @@ export interface TaskAuthorizationTarget {
    * ID autora komentáře pro autorizaci úpravy a smazání komentáře.
    */
   readonly commentAuthorId?: string;
+
+  /**
+   * ID vlastníka soukromé poznámky pro autorizaci operací se soukromou poznámkou.
+   */
+  readonly noteOwnerUserId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

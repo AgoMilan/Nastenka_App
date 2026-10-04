@@ -4,12 +4,16 @@ import Link from "next/link";
 import { resolveActorContext, auth } from "@/infrastructure/auth/index.ts";
 import { getDb } from "@/infrastructure/database/index.ts";
 import { DrizzleBoardRepository } from "@/infrastructure/database/repositories/drizzle-board-repository.ts";
+import { DrizzleMembershipRepository } from "@/infrastructure/database/repositories/drizzle-membership-repository.ts";
 import { DrizzleTaskRepository } from "@/infrastructure/database/repositories/drizzle-task-repository.ts";
 import { DrizzleTaskParticipantRepository } from "@/infrastructure/database/repositories/drizzle-task-participant-repository.ts";
 import { DrizzleAreaRepository } from "@/infrastructure/database/repositories/drizzle-area-repository.ts";
 import { DrizzleUserRepository } from "@/infrastructure/database/repositories/drizzle-user-repository.ts";
 import { DrizzleUserTaskOrderRepository } from "@/infrastructure/database/repositories/drizzle-user-task-order-repository.ts";
 import { DrizzleTaskCommentRepository } from "@/infrastructure/database/repositories/drizzle-task-comment-repository.ts";
+import { DrizzleUserTaskNoteRepository } from "@/infrastructure/database/repositories/drizzle-user-task-note-repository.ts";
+import { GetBoardAreasUseCase } from "@/modules/areas/application/use-cases/get-board-areas.use-case.ts";
+import { GetBoardMembersUseCase } from "@/modules/boards/application/use-cases/get-board-members.use-case.ts";
 import {
   GetMyTasksUseCase,
   type MyTaskFilterMode,
@@ -62,12 +66,14 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
   // Příprava repozitářů a spuštění GetMyTasksUseCase
   const db = getDb();
   const boardRepo = new DrizzleBoardRepository(db);
+  const membershipRepo = new DrizzleMembershipRepository(db);
   const taskRepo = new DrizzleTaskRepository(db);
   const taskParticipantRepo = new DrizzleTaskParticipantRepository(db);
   const areaRepo = new DrizzleAreaRepository(db);
   const userRepo = new DrizzleUserRepository(db);
   const userTaskOrderRepo = new DrizzleUserTaskOrderRepository(db);
   const taskCommentRepo = new DrizzleTaskCommentRepository(db);
+  const userTaskNoteRepo = new DrizzleUserTaskNoteRepository(db);
 
   const getMyTasksUseCase = new GetMyTasksUseCase(
     boardRepo,
@@ -77,6 +83,7 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
     userRepo,
     userTaskOrderRepo,
     taskCommentRepo,
+    userTaskNoteRepo,
   );
 
   const tasksResult = await getMyTasksUseCase.execute(actor, {
@@ -102,6 +109,40 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
       });
     }
   }
+
+  // Dávkové načtení metadat (oblasti, členové, role) pro zúčastněné nástěnky
+  const getBoardAreasUseCase = new GetBoardAreasUseCase(
+    boardRepo,
+    membershipRepo,
+    areaRepo,
+  );
+  const getBoardMembersUseCase = new GetBoardMembersUseCase(
+    boardRepo,
+    membershipRepo,
+    userRepo,
+  );
+
+  const boardIds = Array.from(groupedByBoard.keys());
+  const boardMetaResults = await Promise.all(
+    boardIds.map(async (bId) => {
+      const [areasRes, membersRes, memberRecord] = await Promise.all([
+        getBoardAreasUseCase.execute(actor, bId),
+        getBoardMembersUseCase.execute(actor, bId),
+        membershipRepo.findByBoardAndUser(bId, actor.actor_user_id),
+      ]);
+
+      return {
+        boardId: bId,
+        areas: areasRes.success ? areasRes.data : [],
+        members: membersRes.success ? membersRes.data : [],
+        currentUserRole: memberRecord?.role ?? null,
+      };
+    }),
+  );
+
+  const boardMetaMap = new Map(
+    boardMetaResults.map((item) => [item.boardId, item]),
+  );
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -179,9 +220,20 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {group.tasks.map((task) => (
-                    <MyTaskCard key={task.id} task={task} />
-                  ))}
+                  {group.tasks.map((task) => {
+                    const meta = boardMetaMap.get(task.boardId);
+                    return (
+                      <MyTaskCard
+                        key={task.id}
+                        task={task}
+                        areas={meta?.areas ?? []}
+                        members={meta?.members ?? []}
+                        currentUserRole={meta?.currentUserRole ?? null}
+                        currentUserId={actor.actor_user_id}
+                        isGlobalAdmin={actor.global_role === "ADMIN"}
+                      />
+                    );
+                  })}
                 </div>
               </section>
             ))}

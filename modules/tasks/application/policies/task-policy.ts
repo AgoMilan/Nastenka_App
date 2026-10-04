@@ -148,7 +148,27 @@ export function checkTaskPermission(
     }
   }
 
-  // ── 8. Global ADMIN bypass ───────────────────────────────
+  // ── 8. Invarianty soukromých poznámek (platí bez výjimky pro všechny včetně ADMINa) ─
+  if (
+    action === "TASK_PRIVATE_NOTE_VIEW_OWN" ||
+    action === "TASK_PRIVATE_NOTE_UPSERT_OWN" ||
+    action === "TASK_PRIVATE_NOTE_DELETE_OWN"
+  ) {
+    if (task.noteOwnerUserId && task.noteOwnerUserId !== actor.actor_user_id) {
+      return deny("NOT_NOTE_OWNER");
+    }
+  }
+
+  if (
+    action === "TASK_PRIVATE_NOTE_UPSERT_OWN" ||
+    action === "TASK_PRIVATE_NOTE_DELETE_OWN"
+  ) {
+    if (task.status === "ARCHIVOVÁNO") {
+      return deny("TASK_ARCHIVED");
+    }
+  }
+
+  // ── 9. Global ADMIN bypass ───────────────────────────────
   // ADMIN má explicitní přístup ke všem Task operacím na dané Nástěnce
   // (s výjimkou výše ověřených striktních doménových invariantů).
   if (actor.global_role === "ADMIN") {
@@ -280,6 +300,21 @@ export function checkTaskPermission(
     // ── TASK_COMMENT_DELETE_OWN ─────────────────────────────
     // Autor smí smazat svůj vlastní komentář (pokud není úkol archivován).
     case "TASK_COMMENT_DELETE_OWN":
+      return ALLOW;
+
+    // ── TASK_PRIVATE_NOTE_VIEW_OWN ──────────────────────────
+    // Vlastník poznámky (se scope k úkolu) smí číst svou poznámku.
+    case "TASK_PRIVATE_NOTE_VIEW_OWN":
+      return ALLOW;
+
+    // ── TASK_PRIVATE_NOTE_UPSERT_OWN ────────────────────────
+    // Vlastník poznámky (se scope k úkolu) smí vytvořit/upravit svou poznámku.
+    case "TASK_PRIVATE_NOTE_UPSERT_OWN":
+      return ALLOW;
+
+    // ── TASK_PRIVATE_NOTE_DELETE_OWN ────────────────────────
+    // Vlastník poznámky (se scope k úkolu) smí smazat svou poznámku.
+    case "TASK_PRIVATE_NOTE_DELETE_OWN":
       return ALLOW;
 
     // ── Exhaustiveness check ─────────────────────────────────

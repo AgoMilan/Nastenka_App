@@ -18,6 +18,8 @@ import type {
   TaskRecord,
   TaskStatus,
   UserTaskOrderRepository,
+  UserTaskNoteRepository,
+  UserTaskNoteRecord,
 } from "../ports/index.ts";
 import type { BoardTaskParticipantView } from "./get-board-tasks.use-case.ts";
 
@@ -55,6 +57,7 @@ export interface MyTaskView {
   readonly completedAt: Date | null;
   readonly personalPosition?: number;
   readonly commentsCount?: number;
+  readonly hasPrivateNote?: boolean;
 }
 
 /**
@@ -83,6 +86,7 @@ export class GetMyTasksUseCase {
   private readonly userRepo: UserRepository;
   private readonly userTaskOrderRepo?: UserTaskOrderRepository;
   private readonly taskCommentRepo?: TaskCommentRepository;
+  private readonly userTaskNoteRepo?: UserTaskNoteRepository;
 
   constructor(
     boardRepo: BoardRepository,
@@ -92,6 +96,7 @@ export class GetMyTasksUseCase {
     userRepo: UserRepository,
     userTaskOrderRepo?: UserTaskOrderRepository,
     taskCommentRepo?: TaskCommentRepository,
+    userTaskNoteRepo?: UserTaskNoteRepository,
   ) {
     this.boardRepo = boardRepo;
     this.taskRepo = taskRepo;
@@ -100,6 +105,7 @@ export class GetMyTasksUseCase {
     this.userRepo = userRepo;
     this.userTaskOrderRepo = userTaskOrderRepo;
     this.taskCommentRepo = taskCommentRepo;
+    this.userTaskNoteRepo = userTaskNoteRepo;
   }
 
   async execute(
@@ -266,6 +272,15 @@ export class GetMyTasksUseCase {
       );
     }
 
+    // Načtení existence soukromých poznámek pro úkoly dávkově (Batch)
+    let userNotesMap = new Map<string, UserTaskNoteRecord>();
+    if (this.userTaskNoteRepo && tasksWithRole.length > 0) {
+      userNotesMap = await this.userTaskNoteRepo.findByUserAndTaskIds(
+        actor.actor_user_id,
+        tasksWithRole.map(({ task }) => task.id),
+      );
+    }
+
     // ── 10. Sestavení obohaceného zobrazení MyTaskView ──────────
     const views: MyTaskView[] = tasksWithRole.map(({ task: t, userRole }) => {
       const taskParticipants = participantsByTaskId.get(t.id) ?? [];
@@ -307,6 +322,7 @@ export class GetMyTasksUseCase {
         completedAt: t.completedAt,
         personalPosition: personalPos,
         commentsCount: commentCounts.get(t.id) ?? 0,
+        hasPrivateNote: userNotesMap.has(t.id),
       };
     });
 

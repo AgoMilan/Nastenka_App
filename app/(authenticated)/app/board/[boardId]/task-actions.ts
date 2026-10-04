@@ -345,6 +345,7 @@ export async function updateTaskAction(
   }
 
   revalidatePath(`/app/board/${parsed.data.boardId}`);
+  revalidatePath("/app/my-work");
 
   return {
     success: true,

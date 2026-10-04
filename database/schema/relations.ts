@@ -9,6 +9,7 @@ import { tasks } from "./tasks.ts";
 import { taskParticipants } from "./task-participants.ts";
 import { userTaskOrders } from "./user-task-orders.ts";
 import { taskComments } from "./task-comments.ts";
+import { userTaskNotes } from "./user-task-notes.ts";
 import { auditLogs } from "./audit-logs.ts";
 import { notifications } from "./notifications.ts";
 import { outbox } from "./outbox.ts";
@@ -25,6 +26,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   assignedTasks: many(tasks, { relationName: "taskAssignee" }),
   participations: many(taskParticipants),
   comments: many(taskComments),
+  notes: many(userTaskNotes),
   auditLogs: many(auditLogs),
   notifications: many(notifications),
   outboxEvents: many(outbox),
@@ -94,6 +96,7 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   }),
   participants: many(taskParticipants),
   comments: many(taskComments),
+  notes: many(userTaskNotes),
 }));
 
 /**
@@ -206,4 +209,21 @@ export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+/**
+ * Relační vazby pro soukromé poznámky úkolu (UserTaskNote).
+ */
+export const userTaskNotesRelations = relations(
+  userTaskNotes,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [userTaskNotes.userId],
+      references: [users.id],
+    }),
+    task: one(tasks, {
+      fields: [userTaskNotes.taskId],
+      references: [tasks.id],
+    }),
+  }),
+);
 

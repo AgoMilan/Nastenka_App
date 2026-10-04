@@ -18,6 +18,7 @@ import type {
   TaskParticipantRepository,
   UserTaskOrderRepository,
   TaskCommentRepository,
+  UserTaskNoteRepository,
 } from "../../../tasks/application/ports/index.ts";
 
 export interface UnitOfWorkRepositories {
@@ -29,6 +30,7 @@ export interface UnitOfWorkRepositories {
   readonly taskParticipants?: TaskParticipantRepository;
   readonly userTaskOrders?: UserTaskOrderRepository;
   readonly taskComments?: TaskCommentRepository;
+  readonly userTaskNotes?: UserTaskNoteRepository;
 }
 
 export interface UnitOfWork {

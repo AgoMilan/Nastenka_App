@@ -37,6 +37,12 @@ export {
 } from "./task-comments.ts";
 
 export {
+  userTaskNotes,
+  type UserTaskNoteSelect,
+  type UserTaskNoteInsert,
+} from "./user-task-notes.ts";
+
+export {
   auditLogs,
   type AuditLogSelect,
   type AuditLogInsert,
@@ -83,4 +89,5 @@ export {
   accountsRelations,
   userTaskOrdersRelations,
   taskCommentsRelations,
+  userTaskNotesRelations,
 } from "./relations.ts";
