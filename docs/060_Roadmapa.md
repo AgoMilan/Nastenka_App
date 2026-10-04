@@ -41,6 +41,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 8 | Komentáře a diskuze k úkolům (uživatelská diskuze u úkolů, tabulka task_comments, TaskCommentRepository a transakční UnitOfWork, author-only editace a mazání bez výjimek i pro ADMIN/OWNER/MANAGER, striktní read-only režim pro archivované úkoly, kaskádový delete při smazání úkolu, dávkový countByTaskIds, TaskCommentsDialog, počítadlo komentářů na TaskCard a MyTaskCard, 26 nových testů, 792 celkem) | DONE | 30. 9. 2026 |
 | Fix Auth Form | Bezpečnostní oprava auth formulářů (explicitní method="post" v LoginForm a RegisterForm proti úniku přihlašovacích údajů přes nativní GET fallback při výpadku/zpoždění React hydratace, zachování Better Auth toku, 14 nových testů, 806 celkem) | DONE | 30. 9. 2026 |
 | LAN Dev Auth | Povolení autentizace ze síťové adresy v developmentu (Next.js allowedDevOrigins pro 192.168.0.53 a HMR, Better Auth trustedOrigins přes resolveTrustedOrigins a BETTER_AUTH_TRUSTED_ORIGINS, zachování CSRF ochrany, 2 nové testy, 808 celkem) | DONE | 30. 9. 2026 |
+| Rozšíření Moje úkoly | Editace úkolů a soukromé poznámky (editace z MyTaskCard s využitím existujícího EditTaskDialog, updateTaskAction a TaskPolicy bez nových blanket práv, soukromé poznámky user_task_notes s unikátním [user_id, task_id], author-only izolace bez blanket práv pro ADMIN/OWNER/MANAGER, ochrana při odchodu z boardu, read-only archiv, kaskádové mazání, batch hasPrivateNote bez N+1, UserTaskNoteDialog, 31 nových testů, 839 celkem) | DONE | 4. 10. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -277,6 +278,31 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 - **Konfigurace a fail-fast validace:** V `infrastructure/configuration/env.schema.ts` přidána volitelná proměnná `BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional()` a zdokumentována v `.env.example`.
 - **Zachování bezpečnosti:** Striktně odmítány zástupné znaky (`*`) a cizí/neautorizované originy (např. `http://evil.com` skončí `403 INVALID_ORIGIN`).
 - **Testy a Quality Gates:** 2 nové unit testy (`tests/unit/auth.test.ts` a `tests/unit/env.test.ts`), celkem 808/808 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
+#### Rozšíření Moje úkoly – Editace úkolů a soukromé poznámky (Dokončeno)
+- **Koncept a cíl:**
+  - Rozšířit osobní workspace `/app/my-work` („Moje úkoly“) tak, aby uživatel mohl přímo z karty úkolu editovat data úkolu podle již existujících oprávnění a současně spravovat svou osobní soukromou poznámku k úkolu.
+- **Funkce A – Editace úkolu z „Moje úkoly“:**
+  - Na kartě `MyTaskCard` přidána akce `[ ✏️ Upravit ]` otevírající existující `EditTaskDialog`.
+  - Maximální znovupoužití: volá existující `updateTaskAction` a doménové use casy (`UpdateTaskUseCase`, `ChangeTaskAssigneeUseCase`, `ChangeTaskAreaUseCase`, `ChangeTaskDueDateUseCase`, `ChangeTaskPriorityUseCase`).
+  - Žádné nové blanket oprávnění typu `MY_TASK_EDIT` – plně zachována existující `TaskPolicy`. Skutečnost, že uživatel úkol v přehledu vidí (např. jako spoluřešitel), mu automaticky nedává právo měnit pole (změna oblasti a termínu vyžaduje status pracovníka úkolu `isTaskWorker`, roli Správce, Vlastníka nebo Administrátora).
+  - Obousměrná revalidace cache: `updateTaskAction` revaliduje detail nástěnky (`/app/board/[boardId]`) i osobní workspace (`/app/my-work`).
+- **Funkce B – Soukromé poznámky k úkolům (User Task Notes):**
+  - **Zásadní oddělení od komentářů:** Soukromá poznámka je osobní obsah konkrétního uživatele, nikoliv veřejná týmová diskuze (`task_comments`). Nikdo jiný ji nesmí vidět.
+  - **Databázový model & migrace:** Tabulka `user_task_notes` (`id`, `user_id`, `task_id`, `content` 1–5000 znaků, `created_at`, `updated_at`) s unikátním omezením `(user_id, task_id)` zaručujícím max. 1 aktivní poznámku na uživatele a úkol, cizím klíčem `task_id` s `ON DELETE CASCADE` a `user_id` s `ON DELETE CASCADE`. Verzovaná Drizzle migrace `0004_uneven_kronos.sql`.
+  - **Repozitář & Transakční Unit of Work:** Port `UserTaskNoteRepository` (`findById`, `findByUserAndTask`, `findByUserAndTaskIds`, `upsert`, `delete`, `deleteAllForTask`, `deleteAllForUser`) s Drizzle implementací `DrizzleUserTaskNoteRepository` registrovanou v `DrizzleUnitOfWork`.
+  - **Dávkové dotazování:** Metoda `findByUserAndTaskIds` v `GetMyTasksUseCase` načítá existenci poznámek pro celou sadu zobrazených úkolů bez N+1 dotazů a nastavuje příznak `hasPrivateNote` na `MyTaskView`.
+  - **Striktní bezpečnostní model a autorizace v TaskPolicy:**
+    - `TASK_PRIVATE_NOTE_VIEW_OWN`, `TASK_PRIVATE_NOTE_UPSERT_OWN`, `TASK_PRIVATE_NOTE_DELETE_OWN` jsou vyhrazeny **výhradně vlastníkovi poznámky** (`actor.actor_user_id === noteOwnerUserId`).
+    - **Absolutní zákaz blanket přístupu pro ADMIN i správu:** Ani vlastník nástěnky (`OWNER`), provozní správce (`MANAGER`) ani globální administrátor (`ADMIN`) nesmí číst, měnit ani mazat cizí soukromou poznámku (`NOT_NOTE_OWNER`).
+    - **Ochrana při odchodu z nástěnky:** Nečlen nástěnky (i po odchodu či odebrání) nesmí získat přístup ke své dřívější poznámce ani při znalosti `taskId` (`NOT_A_MEMBER`).
+    - **Chování u dokončených a archivovaných úkolů:** Úkol ve stavu `HOTOVO` umožňuje plné čtení, úpravu i smazání poznámky. U archivovaného úkolu (`ARCHIVOVÁNO`) je povoleno pouze čtení existující poznámky; zápis a smazání jsou striktně zakázány (`TASK_ARCHIVED`) i pro vlastníka poznámky a administrátora.
+    - **Serverová autorita identity:** Server nikdy nepřijímá `userId` z klienta; identita aktéra je určena výhradně ze serverové session (`ActorContext`).
+  - **Aplikační vrstva & Use Cases:** `GetUserTaskNoteUseCase` (ověření členství a autorizace), `UpsertUserTaskNoteUseCase` (transakční vytvoření/úprava s kontrolou archivu a autorizace), `DeleteUserTaskNoteUseCase` (transakční smazání).
+  - **Server Actions:** `getUserTaskNoteAction`, `upsertUserTaskNoteAction`, `deleteUserTaskNoteAction` v `app/(authenticated)/app/my-work/note-actions.ts`.
+  - **UI komponenty:** Tlačítko `[ 📝 Moje poznámka ]` na kartě `MyTaskCard` (s vizuální indikací, pokud je poznámka uložena). Modální dialog `UserTaskNoteDialog` s jasným bezpečnostním upozorněním *„Soukromá poznámka – vidíte ji pouze vy.“*, textovou plochou, počítadlem znaků (1–5000), ukládáním, možností smazání a read-only bannerem u archivovaných úkolů.
+- **Vymezení rozsahu:** Žádné notifikace, žádné audit history, žádné attachments, žádný globální search, žádný redesign celých Moje úkoly ani drag & drop mezi boardy.
+- **Testy a Quality Gates:** 31 nových unit testů (`tests/unit/user-task-notes.test.ts` 14 testů, `tests/unit/my-tasks-edit.test.ts` 17 testů), celkem 839/839 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
 ---
 

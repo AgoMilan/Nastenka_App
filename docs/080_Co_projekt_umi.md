@@ -23,7 +23,7 @@ Nástěnka je modulární monolit postavený na Next.js 16 (App Router), TypeScr
 
 Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
-- **Databázové schéma (Drizzle ORM):** 14 tabulek – `users`, `boards`, `memberships`, `areas`, `tasks`, `task_participants`, `user_task_orders`, `task_comments`, `audit_logs`, `notifications`, `outbox`, `sessions`, `accounts`, `verifications`.
+- **Databázové schéma (Drizzle ORM):** 15 tabulek – `users`, `boards`, `memberships`, `areas`, `tasks`, `task_participants`, `user_task_orders`, `task_comments`, `user_task_notes`, `audit_logs`, `notifications`, `outbox`, `sessions`, `accounts`, `verifications`.
 - **Better Auth – serverová autentizace:** Integrace Better Auth 1.7.5 s Drizzle adaptérem, lazy inicializace, e-mail/heslo přihlašování.
 - **ActorContext:** Server-side `resolveActorContext()` sestavuje bezpečný kontext volajícího (actor_user_id, global_role, session_id, is_active) z live DB stavu. Vrací `null` pro neaktivní nebo soft-deleted uživatele.
 - **Board Authorization Policy Engine:** `checkBoardPermission()` vyhodnocuje Board-level oprávnění na základě ActorContext a členství. Implementuje explicitní autorizační matici (ALLOW/DENY s důvody), ADMIN bypass, soft-delete guard a 401 vs 403 rozlišení.
@@ -135,8 +135,25 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Aplikační use cases:** `GetTaskCommentsUseCase` (chronologické seřazení komentářů, dávkové doplnění autorů bez N+1, autorizační příznaky `canEdit`/`canDelete`, indikátor archivovaného úkolu), `AddTaskCommentUseCase` (Zod validace 1–5000 znaků, autorizace), `UpdateTaskCommentUseCase` (autorská kontrola, aktualizace obsahu a časového razítka `updatedAt`), `DeleteTaskCommentUseCase` (autorská kontrola, odstranění záznamu).
   - **Server Actions & Dialog (`TaskCommentsDialog`):** Server Actions v `comment-actions.ts` se serverovým `ActorContextem` a revalidací cesty `/app/board/[boardId]`. Modální dialog s dynamickým scrollováním na nejnovější komentář, počítadlem znaků, zkratkou Ctrl+Enter, inline editací s ukládáním i rušením, potvrzovacím dialogem před smazáním komentáře a informačním pruhem u archivovaných úkolů (*„Diskuze je uzamčena pro čtení.“*).
   - **Vizuální indikátory a počítadla:** Dynamické počítadlo komentářů s tlačítkem otevření diskuze přímo na `TaskCard` (`💬 X komentářů`) a kompaktní odznak počtu komentářů na `MyTaskCard` v přehledu Moje úkoly.
+- **Editace úkolů z přehledu „Moje úkoly“:**
+  - **Přímo z osobního workspace:** Tlačítko `[ ✏️ Upravit ]` na kartě `MyTaskCard` v `/app/my-work` umožňuje okamžitou editaci úkolu bez nutnosti přecházet na příslušnou nástěnku.
+  - **Architektonické znovupoužití:** Plně znovupoužívá dialog `EditTaskDialog`, Server Action `updateTaskAction` i stávající doménové use casy (`UpdateTaskUseCase`, `ChangeTaskAssigneeUseCase`, `ChangeTaskAreaUseCase`, `ChangeTaskDueDateUseCase`, `ChangeTaskPriorityUseCase`). Nevznikla žádná duplicitní logika ani blanket oprávnění typu `MY_TASK_EDIT`.
+  - **Autorizace podle existující TaskPolicy:** Zobrazení úkolu v „Moje úkoly“ (např. z pozice spoluřešitele) neuděluje právo měnit pole, na která uživatel nemá oprávnění. Změna oblasti (`TASK_CHANGE_AREA`) a termínu (`TASK_CHANGE_DUE_DATE`) zůstává omezena na řešitele, spoluřešitele, správce, vlastníka a administrátora. Backend oprávnění striktně ověřuje nezávisle na UI.
+  - **Revalidace obou pohledů:** Server Action `updateTaskAction` automaticky revaliduje jak detail dotčené nástěnky (`/app/board/[boardId]`), tak osobní workspace (`/app/my-work`).
+- **Soukromé poznámky k úkolům (User Task Notes):**
+  - **Osobní obsah vs. týmová diskuze:** Soukromá poznámka je osobní obsah konkrétního uživatele k úkolu, striktně oddělený od týmových komentářů (`task_comments`). Nikdo jiný ji nemůže vidět ani upravovat.
+  - **Databázový model & integrita:** Samostatná tabulka `user_task_notes` (`id`, `user_id`, `task_id`, `content`, časová razítka) s unikátním složeným omezením `(user_id, task_id)` (maximálně jedna poznámka na uživatele a úkol) a kaskádovým smazáním při odstranění úkolu (`task_id ON DELETE CASCADE`).
+  - **Repozitář & Transakční Unit of Work:** Port `UserTaskNoteRepository` a implementace `DrizzleUserTaskNoteRepository` v `DrizzleUnitOfWork` s metodou `upsert` (`onConflictDoUpdate`) a dávkovou metodou `findByUserAndTaskIds` eliminující N+1 dotazy při načítání přehledu úkolů (`hasPrivateNote`).
+  - **Striktní bezpečnostní model a autorizace (TaskPolicy):**
+    - `TASK_PRIVATE_NOTE_VIEW_OWN`, `TASK_PRIVATE_NOTE_UPSERT_OWN`, `TASK_PRIVATE_NOTE_DELETE_OWN`: Vyhrazeno **výhradně vlastníkovi poznámky** (`actor.actor_user_id === noteOwnerUserId`).
+    - **Absolutní zákaz blanket přístupu:** Ani vlastník nástěnky (`OWNER`), provozní správce (`MANAGER`) ani globální administrátor (`ADMIN`) nesmí číst, upravovat ani mazat cizí soukromou poznámku (`NOT_NOTE_OWNER`).
+    - **Ochrana při odchodu z nástěnky:** Nečlen nástěnky (včetně uživatele po odebrání či dobrovolném odchodu) nesmí získat přístup ke své poznámce ani při znalosti `taskId` (`NOT_A_MEMBER`).
+    - **Chování u dokončených a archivovaných úkolů:** Úkol ve stavu `HOTOVO` umožňuje plné čtení, zápis i smazání poznámky. U archivovaného úkolu (`ARCHIVOVÁNO`) je povoleno pouze čtení existující poznámky; zápis a smazání jsou striktně odmítnuty (`TASK_ARCHIVED`) i pro vlastníka poznámky a administrátora.
+    - **Serverová autorita identity:** Server nikdy nepřijímá `userId` z klienta jako autoritu; identita aktéra je určena ze serverové session (`ActorContext`).
+  - **Aplikační use cases:** `GetUserTaskNoteUseCase` (ověření členství a autorizace čtení), `UpsertUserTaskNoteUseCase` (transakční vytvoření/úprava s kontrolou archivu a autorizace), `DeleteUserTaskNoteUseCase` (transakční smazání).
+  - **UI a dialog (`UserTaskNoteDialog`):** Tlačítko `[ 📝 Moje poznámka ]` na kartě `MyTaskCard` s vizuální indikací uloženého obsahu. Modální dialog s jasným bezpečnostním označením *„Soukromá poznámka – vidíte ji pouze vy.“*, textovou plochou, počítadlem znaků (1–5000), ukládáním, možností smazání poznámky a read-only bannerem u archivovaných úkolů.
 - **Auth Route Handler:** Next.js Catch-All Route Handler (`/api/auth/[...all]`) propojující Better Auth s Next.js.
-- **Databázové migrace:** 4 verzované Drizzle migrace (init schema + Better Auth persistence + user_task_orders + task_comments).
+- **Databázové migrace:** 5 verzovaných Drizzle migrací (init schema + Better Auth persistence + user_task_orders + task_comments + user_task_notes).
 
 ---
 
@@ -187,6 +204,13 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Ochrana diskuze u archivovaných úkolů (striktní read-only stav pro komentáře, zákaz přidávání, editace i mazání).
 - Počítadlo komentářů na kartě úkolu (`TaskCard`) i v osobním přehledu `MyTaskCard` (optimalizované dávkové počítání `countByTaskIds`).
 - Kaskádové smazání komentářů při odstranění úkolu.
+- Editace úkolů přímo z karty v osobním workspace `Moje úkoly` (`/app/my-work`) tlačítkem `[ ✏️ Upravit ]` s využitím existujícího `EditTaskDialog`, `updateTaskAction` a autorizací přes stávající `TaskPolicy`.
+- Soukromé poznámky k úkolům v přehledu `Moje úkoly` (`UserTaskNoteDialog`, `note-actions.ts`, tabulka `user_task_notes` s unikátním constraintem `[user_id, task_id]`).
+- Striktní author-only přístup k soukromé poznámce bez blanket práv i pro ADMIN, OWNER a MANAGER (`NOT_NOTE_OWNER`).
+- Zákaz přístupu k poznámce po odchodu uživatele z nástěnky (`NOT_A_MEMBER`) i při znalosti `taskId`.
+- Zákaz zápisu a smazání poznámky u archivovaných úkolů (`TASK_ARCHIVED`, povoleno pouze čtení) a povolený zápis u dokončených úkolů `HOTOVO`.
+- Dávková detekce existence poznámky (`hasPrivateNote`) v `GetMyTasksUseCase` bez N+1 dotazů.
+- Kaskádové smazání soukromých poznámek při odstranění úkolu.
 - Zabezpečení přihlašovacího a registračního formuláře před únikem hesla do URL (explicitní `method="post"` v `LoginForm` i `RegisterForm` zabraňující nativnímu GET fallbacku při absenci hydratace).
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
@@ -221,9 +245,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly i Komentáře a diskuzi k úkolům jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly i Komentáře a diskuzi k úkolům jsou hotové (STEP 4/22, STEP 2, STEP 3, STEP 4, STEP 5A, STEP 5B, STEP 6, STEP 7, STEP 8 a Board Edit).
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly, Komentáře i Soukromé poznámky jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly (včetně editace a soukromých poznámek) i Komentáře a diskuzi k úkolům jsou hotové.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (808 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (839 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -232,6 +256,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 4. 10. 2026 | Rozšíření „Moje úkoly“ – editace úkolů přímo z karty a soukromé poznámky (tlačítko Upravit s napojením na EditTaskDialog a updateTaskAction bez nových blanket práv, soukromé poznámky user_task_notes s unikátním [user_id, task_id], author-only přístup bez výjimek i pro ADMIN/OWNER/MANAGER, ochrana při odchodu z boardu, read-only archiv, kaskádový delete při smazání úkolu, dávkový hasPrivateNote, UserTaskNoteDialog, 31 nových testů, 839 celkem) |
 | 30. 9. 2026 | Povolení autentizace ze síťové adresy v lokálním developmentu – Next.js allowedDevOrigins pro 192.168.0.53 a HMR, Better Auth trustedOrigins přes resolveTrustedOrigins a volitelnou proměnnou BETTER_AUTH_TRUSTED_ORIGINS, 2 nové testy (808 celkem) |
 | 30. 9. 2026 | Bezpečnostní oprava auth formulářů – explicitní method="post" v LoginForm a RegisterForm zabraňující nativnímu odeslání přihlašovacích/registračních údajů přes GET do URL při výpadku či zpoždění React hydratace, 14 nových testů (806 celkem) |
 | 30. 9. 2026 | STEP 8 – Komentáře a diskuze k úkolům (uživatelská diskuze u úkolů, dialog TaskCommentsDialog, počítadlo komentářů na TaskCard a MyTaskCard, author-only editace a mazání bez výjimek i pro ADMIN/OWNER/MANAGER, striktní read-only režim pro archivované úkoly, tabulka task_comments s kaskádovým smazáním, TaskCommentRepository, transakční DrizzleUnitOfWork integrace, dávkový countByTaskIds, 26 nových testů, 792 celkem) |
