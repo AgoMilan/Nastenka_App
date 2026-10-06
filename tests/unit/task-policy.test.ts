@@ -661,4 +661,56 @@ describe("TaskPolicy – checkTaskPermission", () => {
       assert.ok("reason" in result && result.reason === "INSUFFICIENT_ROLE");
     });
   });
+
+  // ── 11. Invariant archivovaného úkolu (TASK_ARCHIVED) ────────
+  describe("11. Invariant archivovaného úkolu (TASK_ARCHIVED)", () => {
+    const archivedTask: TaskAuthorizationTarget = {
+      taskId: "task-archived",
+      boardId,
+      createdBy: otherUserId,
+      assigneeId: actorUserId,
+      status: "ARCHIVOVÁNO",
+      isBoardDeleted: false,
+    };
+
+    test("TASK_CHANGE_STATUS na archivovaném úkolu vrací DENY(TASK_ARCHIVED) pro assignee", () => {
+      const result = checkTaskPermission(
+        userActor,
+        boardId,
+        memberMembership,
+        archivedTask,
+        relAssignee,
+        "TASK_CHANGE_STATUS",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(!result.allowed && result.reason === "TASK_ARCHIVED");
+    });
+
+    test("TASK_CHANGE_STATUS na archivovaném úkolu vrací DENY(TASK_ARCHIVED) pro OWNERa", () => {
+      const result = checkTaskPermission(
+        userActor,
+        boardId,
+        ownerMembership,
+        archivedTask,
+        relOrdinaryMember,
+        "TASK_CHANGE_STATUS",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(!result.allowed && result.reason === "TASK_ARCHIVED");
+    });
+
+    test("TASK_CHANGE_STATUS na archivovaném úkolu vrací DENY(TASK_ARCHIVED) pro ADMINa", () => {
+      const result = checkTaskPermission(
+        adminActor,
+        boardId,
+        null,
+        archivedTask,
+        relOrdinaryMember,
+        "TASK_CHANGE_STATUS",
+      );
+      assert.equal(result.allowed, false);
+      assert.ok(!result.allowed && result.reason === "TASK_ARCHIVED");
+    });
+  });
 });
+

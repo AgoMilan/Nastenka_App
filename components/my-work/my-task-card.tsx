@@ -9,6 +9,7 @@ import type { BoardMemberView } from "@/modules/boards/application/use-cases/ind
 import { EditTaskDialog } from "@/components/tasks/edit-task-dialog.tsx";
 import { TaskCommentsDialog } from "@/components/tasks/task-comments-dialog.tsx";
 import { UserTaskNoteDialog } from "./user-task-note-dialog.tsx";
+import { changeTaskStatusAction } from "@/app/(authenticated)/app/board/[boardId]/task-actions.ts";
 
 export interface MyTaskCardProps {
   readonly task: MyTaskView;
@@ -37,40 +38,43 @@ function formatDate(date: Date | null): string | null {
   }).format(date);
 }
 
-function getStatusBadge(status: TaskStatus) {
-  switch (status) {
-    case "NOVÉ":
-      return {
-        label: "Nové",
-        className: "bg-blue-50 text-blue-700 border-blue-200",
-      };
-    case "PŘEVZATÉ":
-      return {
-        label: "Převzaté",
-        className: "bg-indigo-50 text-indigo-700 border-indigo-200",
-      };
-    case "ROZPRACOVANÉ":
-      return {
-        label: "Rozpracované",
-        className: "bg-amber-50 text-amber-700 border-amber-200",
-      };
-    case "ČEKÁ SE":
-      return {
-        label: "Čeká se",
-        className: "bg-orange-50 text-orange-700 border-orange-200",
-      };
-    case "HOTOVO":
-      return {
-        label: "Hotovo",
-        className: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      };
-    case "ARCHIVOVÁNO":
-      return {
-        label: "Archivováno",
-        className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-      };
-  }
-}
+const STATUS_CONFIG: Record<
+  TaskStatus,
+  { label: string; className: string }
+> = {
+  NOVÉ: {
+    label: "Nové",
+    className: "bg-blue-50 text-blue-700 border-blue-200",
+  },
+  PŘEVZATÉ: {
+    label: "Převzaté",
+    className: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  },
+  ROZPRACOVANÉ: {
+    label: "Rozpracované",
+    className: "bg-amber-50 text-amber-700 border-amber-200",
+  },
+  "ČEKÁ SE": {
+    label: "Čeká se",
+    className: "bg-orange-50 text-orange-700 border-orange-200",
+  },
+  HOTOVO: {
+    label: "Hotovo",
+    className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  },
+  ARCHIVOVÁNO: {
+    label: "Archivováno",
+    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+  },
+};
+
+const ACTIVE_STATUSES: readonly TaskStatus[] = [
+  "NOVÉ",
+  "PŘEVZATÉ",
+  "ROZPRACOVANÉ",
+  "ČEKÁ SE",
+  "HOTOVO",
+];
 
 export function MyTaskCard({
   task,
@@ -83,6 +87,11 @@ export function MyTaskCard({
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isNoteOpen, setIsNoteOpen] = React.useState(false);
   const [isCommentsOpen, setIsCommentsOpen] = React.useState(false);
+  const [isStatusMenuOpen, setIsStatusMenuOpen] = React.useState(false);
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const [isPending, startTransition] = React.useTransition();
+  const statusMenuRef = React.useRef<HTMLDivElement>(null);
+
   const [commentsCount, setCommentsCount] = React.useState(
     task.commentsCount ?? 0,
   );
@@ -98,17 +107,77 @@ export function MyTaskCard({
     setHasPrivateNote(task.hasPrivateNote ?? false);
   }, [task.hasPrivateNote]);
 
-  const statusBadge = getStatusBadge(task.status);
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        statusMenuRef.current &&
+        !statusMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsStatusMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const statusConfig = STATUS_CONFIG[task.status] ?? {
+    label: task.status,
+    className: "bg-zinc-100 text-zinc-700 border-zinc-200",
+  };
   const overdue = isTaskOverdue(task.dueDate, task.status);
   const formattedDueDate = formatDate(task.dueDate);
   const isArchived = task.status === "ARCHIVOVÁNO";
 
+  // TASK_CHANGE_STATUS: ASSIGNEE, PARTICIPANT, MANAGER, OWNER, ADMIN (pokud není archivován)
+  const canChangeStatus =
+    !isArchived &&
+    (isGlobalAdmin ||
+      currentUserRole === "OWNER" ||
+      currentUserRole === "MANAGER" ||
+      task.userRole === "ASSIGNEE" ||
+      task.userRole === "PARTICIPANT");
+
   // Editace je povolena pro členy nástěnky i ADMINa, pokud úkol není archivován
   const canEdit = !isArchived && (isGlobalAdmin || currentUserRole !== null);
 
+  const handleStatusChange = (newStatus: TaskStatus) => {
+    if (!task.boardId || newStatus === task.status || isPending) return;
+    setIsStatusMenuOpen(false);
+    setActionError(null);
+
+    const formData = new FormData();
+    formData.append("boardId", task.boardId);
+    formData.append("taskId", task.id);
+    formData.append("status", newStatus);
+
+    startTransition(async () => {
+      const res = await changeTaskStatusAction(null, formData);
+      if (!res.success && res.error) {
+        setActionError(res.error);
+      }
+    });
+  };
+
   return (
     <>
-      <div className="flex flex-col justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-2xs hover:border-zinc-300 transition-colors">
+      <div className={`flex flex-col justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-2xs hover:border-zinc-300 transition-colors ${
+        isPending ? "opacity-70 pointer-events-none" : ""
+      }`}>
+        {/* Chybová zpráva akce */}
+        {actionError && (
+          <div className="mb-2 rounded bg-red-50 p-2 text-xs text-red-700 border border-red-200 flex items-center justify-between gap-2">
+            <span>{actionError}</span>
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              className="text-red-500 hover:text-red-800 text-xs font-bold cursor-pointer"
+              aria-label="Zavřít chybu"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <div>
           {/* Horní řádek: Role, Priorita a Stav */}
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -132,12 +201,65 @@ export function MyTaskCard({
               )}
             </div>
 
-            {/* Odznak stavu */}
-            <span
-              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${statusBadge.className}`}
-            >
-              {statusBadge.label}
-            </span>
+            {/* Stavový badge nebo Quick Status dropdown */}
+            {canChangeStatus ? (
+              <div className="relative" ref={statusMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
+                  disabled={isPending}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium cursor-pointer transition-colors hover:brightness-95 focus:outline-none focus:ring-1 focus:ring-zinc-400 ${
+                    statusConfig.className
+                  } ${isPending ? "opacity-70 cursor-not-allowed" : ""}`}
+                  title="Změnit stav úkolu"
+                  aria-expanded={isStatusMenuOpen}
+                  aria-haspopup="true"
+                >
+                  <span>{statusConfig.label}</span>
+                  <span className="text-[10px] opacity-70">▾</span>
+                </button>
+
+                {isStatusMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 z-30 min-w-36 rounded-md border border-zinc-200 bg-white py-1 shadow-lg animate-in fade-in">
+                    <div className="px-2.5 py-1 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      Změnit stav
+                    </div>
+                    {ACTIVE_STATUSES.map((statusKey) => {
+                      const cfg = STATUS_CONFIG[statusKey];
+                      const isCurrent = task.status === statusKey;
+                      return (
+                        <button
+                          key={statusKey}
+                          type="button"
+                          onClick={() => handleStatusChange(statusKey)}
+                          className={`flex items-center justify-between w-full px-2.5 py-1.5 text-xs text-left transition-colors hover:bg-zinc-50 cursor-pointer ${
+                            isCurrent
+                              ? "font-semibold text-zinc-900 bg-zinc-50/70"
+                              : "text-zinc-700"
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-block w-2 h-2 rounded-full border ${cfg.className}`}
+                            />
+                            {cfg.label}
+                          </span>
+                          {isCurrent && (
+                            <span className="text-zinc-500">✓</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${statusConfig.className}`}
+              >
+                {statusConfig.label}
+              </span>
+            )}
           </div>
 
           {/* Název úkolu s odkazem na nástěnku */}

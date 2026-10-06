@@ -1292,6 +1292,46 @@ describe("STEP 19 – Task Use Cases", () => {
         assert.strictEqual(res.error.reason, "INSUFFICIENT_ROLE");
       }
     });
+
+    test("cannot change status of archived task (TASK_ARCHIVED)", async () => {
+      const archivedTask = await tasksRepo.create({
+        boardId,
+        title: "Archivovaný úkol",
+        createdBy: ownerUser.id,
+        assigneeId: memberUser1.id,
+        status: "ARCHIVOVÁNO",
+      });
+      const useCase = new ChangeTaskStatusUseCase(uow);
+      const res = await useCase.execute(memberActor1, {
+        taskId: archivedTask.id,
+        newStatus: "ROZPRACOVANÉ",
+      });
+      assert.strictEqual(res.success, false);
+      if (!res.success) {
+        assert.ok(res.error instanceof AuthorizationError);
+        assert.strictEqual(res.error.reason, "TASK_ARCHIVED");
+      }
+    });
+
+    test("admin cannot change status of archived task via ChangeTaskStatusUseCase", async () => {
+      const archivedTask = await tasksRepo.create({
+        boardId,
+        title: "Archivovaný úkol pro admina",
+        createdBy: ownerUser.id,
+        assigneeId: memberUser1.id,
+        status: "ARCHIVOVÁNO",
+      });
+      const useCase = new ChangeTaskStatusUseCase(uow);
+      const res = await useCase.execute(adminActor, {
+        taskId: archivedTask.id,
+        newStatus: "ROZPRACOVANÉ",
+      });
+      assert.strictEqual(res.success, false);
+      if (!res.success) {
+        assert.ok(res.error instanceof AuthorizationError);
+        assert.strictEqual(res.error.reason, "TASK_ARCHIVED");
+      }
+    });
   });
 
   // ───────────────────────────────────────────────────────────

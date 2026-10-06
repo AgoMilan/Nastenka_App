@@ -168,7 +168,12 @@ export function checkTaskPermission(
     }
   }
 
-  // ── 9. Global ADMIN bypass ───────────────────────────────
+  // ── 9. Invariant pro změnu stavu úkolu (platí bez výjimky pro všechny včetně ADMINa) ─
+  if (action === "TASK_CHANGE_STATUS" && task.status === "ARCHIVOVÁNO") {
+    return deny("TASK_ARCHIVED");
+  }
+
+  // ── 10. Global ADMIN bypass ──────────────────────────────
   // ADMIN má explicitní přístup ke všem Task operacím na dané Nástěnce
   // (s výjimkou výše ověřených striktních doménových invariantů).
   if (actor.global_role === "ADMIN") {

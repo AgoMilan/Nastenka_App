@@ -121,6 +121,7 @@ export class ChangeTaskStatusUseCase {
             createdBy: task.createdBy,
             assigneeId: task.assigneeId,
             isBoardDeleted: false,
+            status: task.status,
           };
 
           const rel: ActorTaskRelationship = {

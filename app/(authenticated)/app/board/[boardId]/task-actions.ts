@@ -491,6 +491,7 @@ export async function changeTaskStatusAction(
   }
 
   revalidatePath(`/app/board/${boardId}`);
+  revalidatePath("/app/my-work");
   return {
     success: true,
     taskId: parsed.data.taskId,
