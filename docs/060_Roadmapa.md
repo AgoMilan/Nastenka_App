@@ -42,6 +42,9 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | Fix Auth Form | Bezpečnostní oprava auth formulářů (explicitní method="post" v LoginForm a RegisterForm proti úniku přihlašovacích údajů přes nativní GET fallback při výpadku/zpoždění React hydratace, zachování Better Auth toku, 14 nových testů, 806 celkem) | DONE | 30. 9. 2026 |
 | LAN Dev Auth | Povolení autentizace ze síťové adresy v developmentu (Next.js allowedDevOrigins pro 192.168.0.53 a HMR, Better Auth trustedOrigins přes resolveTrustedOrigins a BETTER_AUTH_TRUSTED_ORIGINS, zachování CSRF ochrany, 2 nové testy, 808 celkem) | DONE | 30. 9. 2026 |
 | Rozšíření Moje úkoly | Editace úkolů a soukromé poznámky (editace z MyTaskCard s využitím existujícího EditTaskDialog, updateTaskAction a TaskPolicy bez nových blanket práv, soukromé poznámky user_task_notes s unikátním [user_id, task_id], author-only izolace bez blanket práv pro ADMIN/OWNER/MANAGER, ochrana při odchodu z boardu, read-only archiv, kaskádové mazání, batch hasPrivateNote bez N+1, UserTaskNoteDialog, 31 nových testů, 839 celkem) | DONE | 4. 10. 2026 |
+| STEP 9A | Quick Status v „Moje práce“ (rychlá změna stavu úkolu přímo z karty MyTaskCard bez nutnosti otevírat EditTaskDialog, znovupoužití changeTaskStatusAction a ChangeTaskStatusUseCase, TASK_CHANGE_STATUS v TaskPolicy, read-only ochrana archivu TASK_ARCHIVED, řízení completedAt, obousměrná revalidace /app/board/[boardId] i /app/my-work, 16 nových unit testů, 855 celkem) | DONE | 6. 10. 2026 |
+| STEP 9B | Audit Trail v1 (centrální append-only transakční auditní logování, Audit Event Catalog v1 s 26 událostmi napříč Board, Membership, Area, Task a Comments, DrizzleAuditLogRepository zapojený do UnitOfWork, atomický rollback při selhání auditu, striktní privacy pravidla vylučující text popisu a komentáře, absolutní zákaz auditování privátních poznámek, no-op ochrana, 26 nových unit testů, 881 celkem) | DONE | 6. 10. 2026 |
+| STEP 9B-UI | Audit Trail UI (zobrazení chronologické historie aktivit úkolů i nástěnky, dialogy TaskAuditHistoryDialog a BoardAuditHistoryDialog, vizuální osa AuditTimeline, tlačítka Historie na kartách i v hlavičce nástěnky, GetTaskAuditHistoryUseCase, GetBoardAuditHistoryUseCase, formatAuditEvent pro 25 událostí v češtině, složené indexy na audit_logs, 25 nových testů, 906 celkem) | DONE | 6. 10. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -348,6 +351,26 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - STEP 9B je čistě backendová / aplikační infrastruktura. Žádné UI komponenty pro zobrazení historie zatím nebyly vytvářeny.
 - **Testy a Quality Gates:** 26 nových unit testů v `tests/unit/audit-trail.test.ts` ověřujících všech 26 událostí, privacy pravidla, no-op ochranu, neauditování soukromých poznámek i transakční rollback, celkem 881/881 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 9B-UI – Audit Trail UI (Dokončeno)
+- **Koncept a cíl:**
+  - Poskytnout přívětivé, bezpečné a autorizované UI pro zobrazení chronologické historie aktivit úkolů i celé nástěnky nad existující infrastrukturou Audit Trail v1.
+- **Komponenty a dialogy:**
+  - `AuditTimeline`: znovupoužitelná vizuální časová osa zobrazující chronologický přehled změn se skeletonem pro načítání, prázdným stavem (*„Historie změn je zatím prázdná.“*) a ošetřením chybových stavů.
+  - `TaskAuditHistoryDialog`: modální dialog pro historii konkrétního úkolu, vyvolatelný z karty úkolu `TaskCard` (jak z patičky vedle diskuze, tak z kontextového menu `⋯`) i z osobního přehledu `MyTaskCard` v `/app/my-work`.
+  - `BoardAuditHistoryDialog`: modální dialog pro historii aktivit celé nástěnky.
+  - `BoardHistoryButton`: tlačítko v hlavičce detailu nástěnky `/app/board/[boardId]` otevírající historii nástěnky.
+- **Čtecí aplikační Use Casy & Porty:**
+  - `GetTaskAuditHistoryUseCase`: načtení auditní historie úkolu seřazené chronologicky sestupně, autorizace přes `TaskPolicy` (`TASK_VIEW`, povoleno všem členům i ADMINovi, i pro archivované úkoly), cross-board ověření, dávkové načtení autorů akcí přes `UserRepository.findByIds` (bez N+1).
+  - `GetBoardAuditHistoryUseCase`: načtení historie nástěnky seřazené sestupně, autorizace přes `BoardPolicy` (`BOARD_VIEW`), dávkové načtení jmen autorů.
+  - `DrizzleAuditLogRepository`: rozšíření o `findByTaskId` (vyhledávání podle `targetId` i komentářového JSONB `taskId`) a `findByBoardId` s volitelným limitem.
+  - Drizzle migrace `0005_boring_network.sql`: složené indexy `audit_logs_board_id_timestamp_idx` a `audit_logs_target_id_timestamp_idx`.
+- **Prezentační vrstva a Privacy Policy:**
+  - `formatAuditEvent`: formátovač pokrývající všech 25 událostí do česky srozumitelných popisů se zobrazením přechodu hodnot (`oldValue → newValue`).
+  - Striktní privacy invariant: NIKDY se nezobrazuje text popisu úkolu (`TASK_DESCRIPTION_CHANGED`) ani text komentářů (`TASK_COMMENT_*`). Soukromé poznámky uživatelů se v auditu nikdy nevyskytují.
+- **Server Actions:**
+  - `getTaskAuditHistoryAction` a `getBoardAuditHistoryAction` v `app/(authenticated)/app/board/[boardId]/audit-actions.ts` se serverovým `resolveActorContext` a validací vstupů.
+- **Testy a Quality Gates:** 25 nových unit testů v `tests/unit/audit-trail-ui.test.ts` pokrývajících use casy, autorizaci, limity, cross-board ochranu, formatter všech 25 událostí i privacy invarianty, celkem 906/906 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -366,8 +389,6 @@ Sem patří nejbližší schválené úkoly, které mají následovat.
 
 1. **Přílohy k úkolům:**
    - Správa a nahrávání souborů k úkolům.
-2. **UI pro historii aktivit a auditní stopu:**
-   - Časová osa změn úkolů v UI (na kartě úkolu či v detailu nástěnky) nad existující auditní infrastrukturou.
 
 ---
 

@@ -235,8 +235,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Zákaz zápisu a smazání poznámky u archivovaných úkolů (`TASK_ARCHIVED`, povoleno pouze čtení) a povolený zápis u dokončených úkolů `HOTOVO`.
 - Dávková detekce existence poznámky (`hasPrivateNote`) v `GetMyTasksUseCase` bez N+1 dotazů.
 - Kaskádové smazání soukromých poznámek při odstranění úkolu.
-- Zabezpečení přihlašovacího a registračního formuláře před únikem hesla do URL (explicitní `method="post"` v `LoginForm` i `RegisterForm` zabraňující nativnímu GET fallbacku při absenci hydratace).
 - Centrální auditní stopa Audit Trail v1 pro 26 doménových událostí napříč Board, Membership, Area, Task a Komentáři s transakčním zápisem do tabulky `audit_logs`, no-op ochranou a striktní privacy policy (žádný text popisu, žádný text komentářů, absolutní zákaz auditu soukromých poznámek).
+- Audit Trail UI: přehledné zobrazení chronologické historie změn úkolu (`TaskAuditHistoryDialog`) přímo z karty `TaskCard` i `MyTaskCard` a historie celé nástěnky (`BoardAuditHistoryDialog`, `BoardHistoryButton`) v hlavičce detailu.
+- Časová osa `AuditTimeline` s loading skeletem, empty statem, error handlingem, formátováním všech 25 událostí do češtiny (`formatAuditEvent`), dávkovým načítáním jmen autorů a přísnou privacy ochranou bez zobrazení citlivých textů.
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
 ### Co ještě není implementováno
@@ -270,9 +271,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly, Komentáře i Soukromé poznámky jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly (včetně editace, Quick Status a soukromých poznámek) i Komentáře a diskuzi k úkolům jsou hotové.
-- Auditní stopa (STEP 9B) je plně funkční v aplikační vrstvě s transakčním zápisem 26 událostí do tabulky `audit_logs`; UI komponenty pro zobrazení historie/auditu (např. časová osa na kartě úkolu nebo v detailu nástěnky) zatím nejsou součástí UI a budou řešeny v navazujícím kroku. Outbox infrastruktura je odložena (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (881 testů PASS).
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly, Komentáře, Soukromé poznámky i Auditní stopu jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat, historie změn nástěnky), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, historii změn úkolu, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly (včetně editace, Quick Status, historie a soukromých poznámek) i Komentáře a diskuzi k úkolům jsou hotové.
+- Outbox infrastruktura je odložena (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (906 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -281,6 +282,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 6. 10. 2026 | STEP 9B-UI – Audit Trail UI (zobrazení chronologické historie aktivit úkolů i nástěnky, modální dialogy TaskAuditHistoryDialog a BoardAuditHistoryDialog, vizuální časová osa AuditTimeline s loading skeleton/empty/error stavy, tlačítka Historie na TaskCard, MyTaskCard i v hlavičce nástěnky přes BoardHistoryButton, čtecí use casy GetTaskAuditHistoryUseCase a GetBoardAuditHistoryUseCase, prezentační formátovač formatAuditEvent pokrývající všech 25 událostí v češtině, složené indexy na audit_logs pro boardId a targetId s timestampem, Drizzle migrace 0005_boring_network.sql, přísná privacy ochrana textu popisu a komentářů, 25 nových testů, 906 celkem) |
 | 6. 10. 2026 | STEP 9B – Audit Trail v1 (centrální append-only transakční auditní logování, Audit Event Catalog v1 s 26 událostmi napříč Board, Membership, Area, Task a Comments, DrizzleAuditLogRepository zapojený do UnitOfWork, atomický rollback při selhání auditu, striktní privacy pravidla vylučující text popisu a komentáře, absolutní zákaz auditování privátních poznámek, no-op ochrana, 26 nových unit testů, 881 celkem) |
 | 6. 10. 2026 | STEP 9A – Quick Status v „Moje práce“ (rychlá změna stavu úkolu přímo z karty MyTaskCard bez nutnosti otevírat EditTaskDialog, znovupoužití changeTaskStatusAction a ChangeTaskStatusUseCase, TASK_CHANGE_STATUS v TaskPolicy, read-only ochrana archivu TASK_ARCHIVED, řízení completedAt, obousměrná revalidace /app/board/[boardId] i /app/my-work, 16 nových unit testů, 855 celkem) |
 | 4. 10. 2026 | Rozšíření „Moje úkoly“ – editace úkolů přímo z karty a soukromé poznámky (tlačítko Upravit s napojením na EditTaskDialog a updateTaskAction bez nových blanket práv, soukromé poznámky user_task_notes s unikátním [user_id, task_id], author-only přístup bez výjimek i pro ADMIN/OWNER/MANAGER, ochrana při odchodu z boardu, read-only archiv, kaskádový delete při smazání úkolu, dávkový hasPrivateNote, UserTaskNoteDialog, 31 nových testů, 839 celkem) |
