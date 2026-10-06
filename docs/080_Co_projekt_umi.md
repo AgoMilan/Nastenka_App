@@ -140,6 +140,14 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
   - **Architektonické znovupoužití:** Plně znovupoužívá dialog `EditTaskDialog`, Server Action `updateTaskAction` i stávající doménové use casy (`UpdateTaskUseCase`, `ChangeTaskAssigneeUseCase`, `ChangeTaskAreaUseCase`, `ChangeTaskDueDateUseCase`, `ChangeTaskPriorityUseCase`). Nevznikla žádná duplicitní logika ani blanket oprávnění typu `MY_TASK_EDIT`.
   - **Autorizace podle existující TaskPolicy:** Zobrazení úkolu v „Moje úkoly“ (např. z pozice spoluřešitele) neuděluje právo měnit pole, na která uživatel nemá oprávnění. Změna oblasti (`TASK_CHANGE_AREA`) a termínu (`TASK_CHANGE_DUE_DATE`) zůstává omezena na řešitele, spoluřešitele, správce, vlastníka a administrátora. Backend oprávnění striktně ověřuje nezávisle na UI.
   - **Revalidace obou pohledů:** Server Action `updateTaskAction` automaticky revaliduje jak detail dotčené nástěnky (`/app/board/[boardId]`), tak osobní workspace (`/app/my-work`).
+- **Quick Status v osobním přehledu „Moje úkoly“ (STEP 9A):**
+  - **Rychlá změna stavu přímo z karty:** Na kartě `MyTaskCard` v `/app/my-work` je stav úkolu interaktivním dropdownem (pro nearchivované úkoly a oprávněné uživatele: řešitel, spoluřešitel, správce, vlastník, administrátor), umožňujícím okamžitou změnu stavu bez otevírání detailního dialogu `EditTaskDialog`.
+  - **Plné architektonické znovupoužití:** Využívá existující Server Action `changeTaskStatusAction`, doménový `ChangeTaskStatusUseCase`, Zod schéma `changeTaskStatusSchema` i autorizační `TaskPolicy` (`TASK_CHANGE_STATUS`). Nevznikla žádná paralelní business logika ani duplicitní use case.
+  - **Striktní serverová autorita identity:** Identita aktéra je určena ze serverové session (`resolveActorContext`), klient nesmí předat důvěryhodné `userId`.
+  - **Ochrana archivu (Read-Only):** Archivovaný úkol (`ARCHIVOVÁNO`) je v UI striktně read-only (zobrazuje se statický odznak bez dropdownu) a na backendu je pokus o změnu stavu odmítnut chybou `AuthorizationError (TASK_ARCHIVED)` pro všechny role včetně administrátora (`ADMIN`).
+  - **Řízení `completedAt`:** Přechod do stavu `HOTOVO` automaticky nastaví časové razítko dokončení; návrat z `HOTOVO` do aktivního stavu `completedAt` bezpečně vynuluje (`null`).
+  - **Okamžitá revalidace a reakce filtrů:** Server Action `changeTaskStatusAction` revaliduje detail příslušné nástěnky (`/app/board/[boardId]`) i osobní workspace (`/app/my-work`). Úkol po přechodu do `HOTOVO` okamžitě zmizí z výchozího filtru `Aktivní` a objeví se ve filtru `Dokončené` (a naopak).
+  - **Pending a error handling:** Během provádění akce je tlačítko i karta v disabled/pending stavu (`opacity-70 pointer-events-none`) a případná chyba je zobrazena přímo v horním pruhu karty s možností zavření.
 - **Soukromé poznámky k úkolům (User Task Notes):**
   - **Osobní obsah vs. týmová diskuze:** Soukromá poznámka je osobní obsah konkrétního uživatele k úkolu, striktně oddělený od týmových komentářů (`task_comments`). Nikdo jiný ji nemůže vidět ani upravovat.
   - **Databázový model & integrita:** Samostatná tabulka `user_task_notes` (`id`, `user_id`, `task_id`, `content`, časová razítka) s unikátním složeným omezením `(user_id, task_id)` (maximálně jedna poznámka na uživatele a úkol) a kaskádovým smazáním při odstranění úkolu (`task_id ON DELETE CASCADE`).
@@ -205,6 +213,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Počítadlo komentářů na kartě úkolu (`TaskCard`) i v osobním přehledu `MyTaskCard` (optimalizované dávkové počítání `countByTaskIds`).
 - Kaskádové smazání komentářů při odstranění úkolu.
 - Editace úkolů přímo z karty v osobním workspace `Moje úkoly` (`/app/my-work`) tlačítkem `[ ✏️ Upravit ]` s využitím existujícího `EditTaskDialog`, `updateTaskAction` a autorizací přes stávající `TaskPolicy`.
+- Quick Status v osobním workspace `Moje úkoly` (`/app/my-work`) umožňující rychlou změnu stavu úkolu přímo z karty `MyTaskCard` přes existující `changeTaskStatusAction`, `ChangeTaskStatusUseCase` a `TaskPolicy` (`TASK_CHANGE_STATUS`), s řízením `completedAt`, read-only ochranou archivu (`TASK_ARCHIVED`) a obousměrnou revalidací.
 - Soukromé poznámky k úkolům v přehledu `Moje úkoly` (`UserTaskNoteDialog`, `note-actions.ts`, tabulka `user_task_notes` s unikátním constraintem `[user_id, task_id]`).
 - Striktní author-only přístup k soukromé poznámce bez blanket práv i pro ADMIN, OWNER a MANAGER (`NOT_NOTE_OWNER`).
 - Zákaz přístupu k poznámce po odchodu uživatele z nástěnky (`NOT_A_MEMBER`) i při znalosti `taskId`.
@@ -245,9 +254,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 ## Omezení
 
-- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly, Komentáře i Soukromé poznámky jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly (včetně editace a soukromých poznámek) i Komentáře a diskuzi k úkolům jsou hotové.
+- Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly, Komentáře i Soukromé poznámky jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly (včetně editace, Quick Status a soukromých poznámek) i Komentáře a diskuzi k úkolům jsou hotové.
 - Audit a Outbox infrastruktura jsou odloženy (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (839 testů PASS).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (855 testů PASS).
 - Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
 
 ---
@@ -256,6 +265,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 6. 10. 2026 | STEP 9A – Quick Status v „Moje práce“ (rychlá změna stavu úkolu přímo z karty MyTaskCard bez nutnosti otevírat EditTaskDialog, znovupoužití changeTaskStatusAction a ChangeTaskStatusUseCase, TASK_CHANGE_STATUS v TaskPolicy, read-only ochrana archivu TASK_ARCHIVED, řízení completedAt, obousměrná revalidace /app/board/[boardId] i /app/my-work, 16 nových unit testů, 855 celkem) |
 | 4. 10. 2026 | Rozšíření „Moje úkoly“ – editace úkolů přímo z karty a soukromé poznámky (tlačítko Upravit s napojením na EditTaskDialog a updateTaskAction bez nových blanket práv, soukromé poznámky user_task_notes s unikátním [user_id, task_id], author-only přístup bez výjimek i pro ADMIN/OWNER/MANAGER, ochrana při odchodu z boardu, read-only archiv, kaskádový delete při smazání úkolu, dávkový hasPrivateNote, UserTaskNoteDialog, 31 nových testů, 839 celkem) |
 | 30. 9. 2026 | Povolení autentizace ze síťové adresy v lokálním developmentu – Next.js allowedDevOrigins pro 192.168.0.53 a HMR, Better Auth trustedOrigins přes resolveTrustedOrigins a volitelnou proměnnou BETTER_AUTH_TRUSTED_ORIGINS, 2 nové testy (808 celkem) |
 | 30. 9. 2026 | Bezpečnostní oprava auth formulářů – explicitní method="post" v LoginForm a RegisterForm zabraňující nativnímu odeslání přihlašovacích/registračních údajů přes GET do URL při výpadku či zpoždění React hydratace, 14 nových testů (806 celkem) |

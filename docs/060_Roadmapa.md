@@ -304,6 +304,24 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 - **Vymezení rozsahu:** Žádné notifikace, žádné audit history, žádné attachments, žádný globální search, žádný redesign celých Moje úkoly ani drag & drop mezi boardy.
 - **Testy a Quality Gates:** 31 nových unit testů (`tests/unit/user-task-notes.test.ts` 14 testů, `tests/unit/my-tasks-edit.test.ts` 17 testů), celkem 839/839 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 9A – Quick Status v „Moje práce“ (Dokončeno)
+- **Koncept a cíl:**
+  - Umožnit přihlášenému uživateli přímo na kartě `MyTaskCard` v osobním workspace `/app/my-work` rychle změnit stav úkolu bez otevírání detailního dialogu `EditTaskDialog` a bez přecházení na nástěnku.
+- **Architektonické znovupoužití a žádná duplikace:**
+  - Znovupoužita existující Server Action `changeTaskStatusAction`, existující doménový use case `ChangeTaskStatusUseCase`, Zod validační schéma `changeTaskStatusSchema` a `TaskPolicy` (`TASK_CHANGE_STATUS`).
+  - Nevznikl žádný paralelní use case typu `QuickChangeTaskStatusUseCase` ani žádná paralelní policy.
+- **Serverová autorita identity (No UI Trust):**
+  - Identita volajícího je získávána výhradně ze serverové session (`resolveActorContext`), Server Action nepřijímá `userId` z klienta.
+- **Ochrana archivu (Striktní Read-Only):**
+  - Úkoly ve stavu `ARCHIVOVÁNO` jsou v UI striktně read-only (zobrazuje se statický badge bez dropdownu).
+  - V `TaskPolicy` je `TASK_CHANGE_STATUS` pro archivovaný úkol striktně odmítnut chybou `AuthorizationError (TASK_ARCHIVED)` pro všechny role včetně globálního administrátora (`ADMIN`).
+- **Řízení `completedAt`:**
+  - Při přechodu do stavu `HOTOVO` je nastaveno časové razítko dokončení úkolu; při návratu do jiného aktivního stavu je `completedAt` bezpečně vynulováno (`null`).
+- **Okamžitá revalidace obou pohledů a reakce filtrů:**
+  - `changeTaskStatusAction` revaliduje detail příslušné nástěnky (`/app/board/[boardId]`) i osobní workspace (`/app/my-work`).
+  - Úkol po změně na `HOTOVO` okamžitě zmizí z výchozího filtru `Aktivní` a objeví se ve filtru `Dokončené` (a naopak).
+- **Testy a Quality Gates:** 16 nových unit testů (`tests/unit/my-tasks-status.test.ts` 11 testů, `tests/unit/task-use-cases.test.ts` 2 testy, `tests/unit/task-policy.test.ts` 3 testy), celkem 855/855 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
