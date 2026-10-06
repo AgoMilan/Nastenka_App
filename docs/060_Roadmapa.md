@@ -322,6 +322,32 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - Úkol po změně na `HOTOVO` okamžitě zmizí z výchozího filtru `Aktivní` a objeví se ve filtru `Dokončené` (a naopak).
 - **Testy a Quality Gates:** 16 nových unit testů (`tests/unit/my-tasks-status.test.ts` 11 testů, `tests/unit/task-use-cases.test.ts` 2 testy, `tests/unit/task-policy.test.ts` 3 testy), celkem 855/855 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 9B – Audit Trail / Auditní stopa v1 (Dokončeno)
+- **Koncept a cíl:**
+  - Zaznamenávat významné business mutace dle schváleného **Audit Event Catalog v1** (26 událostí) přímo v aplikačních Use Cases skrze `UnitOfWork` ve stejné DB transakci jako doménová změna.
+- **Audit Event Catalog v1 (26 událostí):**
+  - **Board (4 události):** `BOARD_CREATED`, `BOARD_UPDATED`, `BOARD_OWNER_TRANSFERRED`, `BOARD_DELETED`.
+  - **Membership (4 události):** `MEMBER_ADDED`, `MEMBER_ROLE_CHANGED`, `MEMBER_REMOVED`, `MEMBER_LEFT_BOARD`.
+  - **Area (3 události):** `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`.
+  - **Task (12 událostí):** `TASK_CREATED`, `TASK_TITLE_CHANGED`, `TASK_DESCRIPTION_CHANGED`, `TASK_STATUS_CHANGED`, `TASK_PRIORITY_CHANGED`, `TASK_DUE_DATE_CHANGED`, `TASK_AREA_CHANGED`, `TASK_ASSIGNEE_CHANGED`, `TASK_PARTICIPANT_ADDED`, `TASK_PARTICIPANT_REMOVED`, `TASK_ARCHIVED`, `TASK_DELETED`.
+  - **Comments (3 události):** `TASK_COMMENT_CREATED`, `TASK_COMMENT_EDITED`, `TASK_COMMENT_DELETED`.
+- **Privacy Policy a ochrana citlivých dat:**
+  - `TASK_DESCRIPTION_CHANGED`: Text popisu úkolu se do auditu nikdy neukládá (zaznamenává se pouze příznak `{ hasDescription: boolean }`).
+  - `TASK_COMMENT_*`: Text komentáře se do auditu nikdy neukládá (zaznamenává se pouze `{ taskId: string }`).
+  - **Soukromé poznámky (User Task Notes):** STRIKTNĚ BEZ AUDITU (0 zápisů při upsertu, čtení i smazání poznámky).
+  - **Čtení a zobrazení (Read / View):** Žádný audit.
+- **Integrita a principy návrhu:**
+  - **No-op ochrana:** Pokud se hodnota nezměnila (stejný název, popis, status, priorita, termín, role, obsah komentáře), auditní záznam se nezapisuje.
+  - **1 operace = 1 událost:** `TransferOwnership` generuje pouze `BOARD_OWNER_TRANSFERRED` (žádný duplicitní `MEMBER_ROLE_CHANGED`); `ArchiveTask` generuje pouze `TASK_ARCHIVED` (žádný duplicitní `TASK_STATUS_CHANGED`).
+  - **Transakční Unit of Work & Rollback:** Zápis do `audit_logs` je součástí transakce `UnitOfWork`. Při selhání auditu je celá doménová operace atomicky vrácena zpět (rollback).
+- **Infrastruktura & adaptéry:**
+  - Modul `modules/audit/`: definice `AUDIT_EVENTS`, `AuditEvent`, `AuditLogRecord` a aplikačního portu `AuditLogRepository`.
+  - Drizzle adaptér `DrizzleAuditLogRepository` s integrací do transakčního kontextu `DrizzleUnitOfWork`.
+  - Stávající DB tabulka `audit_logs` plně vyhovuje (žádná nová DB migrace).
+- **Vymezení rozsahu:**
+  - STEP 9B je čistě backendová / aplikační infrastruktura. Žádné UI komponenty pro zobrazení historie zatím nebyly vytvářeny.
+- **Testy a Quality Gates:** 26 nových unit testů v `tests/unit/audit-trail.test.ts` ověřujících všech 26 událostí, privacy pravidla, no-op ochranu, neauditování soukromých poznámek i transakční rollback, celkem 881/881 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -340,8 +366,8 @@ Sem patří nejbližší schválené úkoly, které mají následovat.
 
 1. **Přílohy k úkolům:**
    - Správa a nahrávání souborů k úkolům.
-2. **Historie aktivit a auditní stopa:**
-   - Časová osa změn úkolů (změny stavů, řešitelů, termínů).
+2. **UI pro historii aktivit a auditní stopu:**
+   - Časová osa změn úkolů v UI (na kartě úkolu či v detailu nástěnky) nad existující auditní infrastrukturou.
 
 ---
 
