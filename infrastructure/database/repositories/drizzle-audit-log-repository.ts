@@ -1,9 +1,10 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { auditLogs, type AuditLogSelect } from "../../../database/schema/index.ts";
 import type { Database } from "../client.ts";
 import type {
   AuditLogRecord,
   AuditLogRepository,
+  AuditQueryOptions,
   CreateAuditLogData,
 } from "../../../modules/audit/application/ports/audit-log-repository.port.ts";
 
@@ -32,13 +33,46 @@ export class DrizzleAuditLogRepository implements AuditLogRepository {
     return this.mapToRecord(row);
   }
 
-  async findByBoardId(boardId: string): Promise<AuditLogRecord[]> {
-    const rows = await this.db
+  async findByBoardId(boardId: string, options?: AuditQueryOptions): Promise<AuditLogRecord[]> {
+    const query = this.db
       .select()
       .from(auditLogs)
       .where(eq(auditLogs.boardId, boardId))
       .orderBy(desc(auditLogs.timestamp), desc(auditLogs.id));
 
+    if (options?.limit) {
+      query.limit(options.limit);
+    }
+
+    const rows = await query;
+    return rows.map((row) => this.mapToRecord(row));
+  }
+
+  async findByTaskId(
+    boardId: string,
+    taskId: string,
+    options?: AuditQueryOptions,
+  ): Promise<AuditLogRecord[]> {
+    const query = this.db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.boardId, boardId),
+          or(
+            eq(auditLogs.targetId, taskId),
+            sql`(${auditLogs.newState}->>'taskId') = ${taskId}`,
+            sql`(${auditLogs.previousState}->>'taskId') = ${taskId}`,
+          ),
+        ),
+      )
+      .orderBy(desc(auditLogs.timestamp), desc(auditLogs.id));
+
+    if (options?.limit) {
+      query.limit(options.limit);
+    }
+
+    const rows = await query;
     return rows.map((row) => this.mapToRecord(row));
   }
 

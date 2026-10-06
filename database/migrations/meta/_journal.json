@@ -36,6 +36,13 @@
       "when": 1791131127530,
       "tag": "0004_uneven_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791310747662,
+      "tag": "0005_boring_network",
+      "breakpoints": true
     }
   ]
 }

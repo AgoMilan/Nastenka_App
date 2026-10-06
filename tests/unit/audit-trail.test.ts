@@ -31,6 +31,7 @@ import type {
 import type {
   AuditLogRecord,
   AuditLogRepository,
+  AuditQueryOptions,
   CreateAuditLogData,
 } from "../../modules/audit/application/ports/audit-log-repository.port.ts";
 import {
@@ -99,8 +100,26 @@ class InMemoryAuditLogRepository implements AuditLogRepository {
     return record;
   }
 
-  async findByBoardId(boardId: string): Promise<AuditLogRecord[]> {
-    return this.store.filter((r) => r.boardId === boardId);
+  async findByBoardId(boardId: string, options?: AuditQueryOptions): Promise<AuditLogRecord[]> {
+    const list = this.store
+      .filter((r) => r.boardId === boardId)
+      .slice()
+      .reverse();
+    return options?.limit ? list.slice(0, options.limit) : list;
+  }
+
+  async findByTaskId(boardId: string, taskId: string, options?: AuditQueryOptions): Promise<AuditLogRecord[]> {
+    const list = this.store
+      .filter(
+        (r) =>
+          r.boardId === boardId &&
+          (r.targetId === taskId ||
+            r.newState?.taskId === taskId ||
+            r.previousState?.taskId === taskId),
+      )
+      .slice()
+      .reverse();
+    return options?.limit ? list.slice(0, options.limit) : list;
   }
 
   clone(): AuditLogRecord[] {

@@ -8,6 +8,7 @@ import type { AreaView } from "@/modules/areas/application/use-cases/index.ts";
 import type { BoardMemberView } from "@/modules/boards/application/use-cases/index.ts";
 import { EditTaskDialog } from "@/components/tasks/edit-task-dialog.tsx";
 import { TaskCommentsDialog } from "@/components/tasks/task-comments-dialog.tsx";
+import { TaskAuditHistoryDialog } from "@/components/audit/task-audit-history-dialog.tsx";
 import { UserTaskNoteDialog } from "./user-task-note-dialog.tsx";
 import { changeTaskStatusAction } from "@/app/(authenticated)/app/board/[boardId]/task-actions.ts";
 
@@ -87,6 +88,7 @@ export function MyTaskCard({
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isNoteOpen, setIsNoteOpen] = React.useState(false);
   const [isCommentsOpen, setIsCommentsOpen] = React.useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = React.useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [isPending, startTransition] = React.useTransition();
@@ -332,6 +334,16 @@ export function MyTaskCard({
                 </span>
               )}
             </button>
+
+            <button
+              type="button"
+              onClick={() => setIsHistoryOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 hover:text-zinc-900 transition-colors cursor-pointer"
+              title="Historie změn úkolu"
+            >
+              <span>🕒</span>
+              <span>Historie</span>
+            </button>
           </div>
 
           {/* Metadata řádek: Oblast, Termín */}
@@ -415,6 +427,17 @@ export function MyTaskCard({
           isOpen={isCommentsOpen}
           onClose={() => setIsCommentsOpen(false)}
           onCommentCountChange={(newCount) => setCommentsCount(newCount)}
+        />
+      )}
+
+      {/* Dialog pro historii změn úkolu */}
+      {isHistoryOpen && (
+        <TaskAuditHistoryDialog
+          boardId={task.boardId}
+          taskId={task.id}
+          taskTitle={task.title}
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
         />
       )}
     </>

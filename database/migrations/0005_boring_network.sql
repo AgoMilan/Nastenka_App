@@ -1,0 +1,2 @@
+CREATE INDEX "audit_logs_board_id_timestamp_idx" ON "audit_logs" USING btree ("board_id","timestamp");--> statement-breakpoint
+CREATE INDEX "audit_logs_target_id_timestamp_idx" ON "audit_logs" USING btree ("target_id","timestamp");

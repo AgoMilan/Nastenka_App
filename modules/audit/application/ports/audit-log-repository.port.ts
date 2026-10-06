@@ -21,7 +21,13 @@ export interface CreateAuditLogData {
   readonly timestamp?: Date;
 }
 
+export interface AuditQueryOptions {
+  readonly limit?: number;
+}
+
 export interface AuditLogRepository {
   log(data: CreateAuditLogData): Promise<AuditLogRecord>;
-  findByBoardId?(boardId: string): Promise<AuditLogRecord[]>;
+  findByBoardId(boardId: string, options?: AuditQueryOptions): Promise<AuditLogRecord[]>;
+  findByTaskId(boardId: string, taskId: string, options?: AuditQueryOptions): Promise<AuditLogRecord[]>;
 }
+

@@ -8,6 +8,7 @@ import type { BoardMemberView } from "@/modules/boards/application/use-cases/ind
 import { EditTaskDialog } from "./edit-task-dialog.tsx";
 import { DeleteTaskDialog } from "./delete-task-dialog.tsx";
 import { TaskCommentsDialog } from "./task-comments-dialog.tsx";
+import { TaskAuditHistoryDialog } from "@/components/audit/task-audit-history-dialog.tsx";
 import {
   changeTaskStatusAction,
   takeOverTaskAction,
@@ -81,6 +82,7 @@ export function TaskCard({
   const [isStatusMenuOpen, setIsStatusMenuOpen] = React.useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = React.useState(false);
   const [isCommentsOpen, setIsCommentsOpen] = React.useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = React.useState(false);
   const [commentsCount, setCommentsCount] = React.useState(
     task.commentsCount ?? 0,
   );
@@ -476,7 +478,7 @@ export function TaskCard({
               </button>
             )}
 
-            {(canArchive || canDelete) && boardId && (
+            {boardId && (
               <div className="relative" ref={actionsMenuRef}>
                 <button
                   type="button"
@@ -492,6 +494,17 @@ export function TaskCard({
 
                 {isActionsMenuOpen && (
                   <div className="absolute right-0 top-full mt-1 z-30 min-w-36 rounded-md border border-zinc-200 bg-white py-1 shadow-lg animate-in fade-in">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsActionsMenuOpen(false);
+                        setIsHistoryOpen(true);
+                      }}
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors text-left"
+                    >
+                      <span>🕒</span> Historie změn
+                    </button>
+
                     {canArchive && (
                       <button
                         type="button"
@@ -656,33 +669,58 @@ export function TaskCard({
             </div>
           </div>
 
-          {/* Autor a diskuze */}
+          {/* Autor a diskuze / historie */}
           <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-0.5">
             <span>Zadal/a: {task.createdBy.name || "Neznámý uživatel"}</span>
-            {boardId && (
-              <button
-                type="button"
-                onClick={() => setIsCommentsOpen(true)}
-                className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-900 transition-colors font-medium px-1.5 py-0.5 rounded hover:bg-zinc-100"
-                title={`Diskuze k úkolu (${commentsCount})`}
-                aria-label={`Otevřít diskuzi (${commentsCount} komentářů)`}
-              >
-                <svg
-                  className="w-3.5 h-3.5 text-zinc-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+            <div className="flex items-center gap-1">
+              {boardId && (
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryOpen(true)}
+                  className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-900 transition-colors font-medium px-1.5 py-0.5 rounded hover:bg-zinc-100"
+                  title="Historie změn úkolu"
+                  aria-label="Otevřít historii změn úkolu"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                  />
-                </svg>
-                <span>{commentsCount}</span>
-              </button>
-            )}
+                  <svg
+                    className="w-3.5 h-3.5 text-zinc-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+              )}
+              {boardId && (
+                <button
+                  type="button"
+                  onClick={() => setIsCommentsOpen(true)}
+                  className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-900 transition-colors font-medium px-1.5 py-0.5 rounded hover:bg-zinc-100"
+                  title={`Diskuze k úkolu (${commentsCount})`}
+                  aria-label={`Otevřít diskuzi (${commentsCount} komentářů)`}
+                >
+                  <svg
+                    className="w-3.5 h-3.5 text-zinc-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                    />
+                  </svg>
+                  <span>{commentsCount}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </article>
@@ -763,6 +801,17 @@ export function TaskCard({
           isOpen={isCommentsOpen}
           onClose={() => setIsCommentsOpen(false)}
           onCommentCountChange={(newCount) => setCommentsCount(newCount)}
+        />
+      )}
+
+      {/* Dialog pro historii změn úkolu */}
+      {isHistoryOpen && boardId && (
+        <TaskAuditHistoryDialog
+          boardId={boardId}
+          taskId={task.id}
+          taskTitle={task.title}
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
         />
       )}
     </>

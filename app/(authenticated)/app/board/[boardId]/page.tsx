@@ -26,6 +26,7 @@ import {
 import { RoleBadge } from "@/components/boards/role-badge.tsx";
 import { BoardSwitcher } from "@/components/boards/board-switcher.tsx";
 import { EditBoardButton } from "@/components/boards/edit-board-dialog.tsx";
+import { BoardHistoryButton } from "@/components/audit/board-history-button.tsx";
 import { LogoutButton } from "@/components/auth/logout-button.tsx";
 import { AreaSection } from "@/components/areas/area-section.tsx";
 import { MembersSection } from "@/components/members/members-section.tsx";
@@ -225,6 +226,10 @@ export default async function BoardPage({ params, searchParams }: BoardPageProps
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
+              <BoardHistoryButton
+                boardId={board.id}
+                boardName={board.name}
+              />
               {canEditBoard && (
                 <EditBoardButton
                   boardId={board.id}
