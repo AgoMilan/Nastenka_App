@@ -20,6 +20,7 @@ import type {
   TaskCommentRepository,
   UserTaskNoteRepository,
 } from "../../../tasks/application/ports/index.ts";
+import type { AuditLogRepository } from "../../../audit/application/ports/audit-log-repository.port.ts";
 
 export interface UnitOfWorkRepositories {
   readonly boards: BoardRepository;
@@ -31,6 +32,7 @@ export interface UnitOfWorkRepositories {
   readonly userTaskOrders?: UserTaskOrderRepository;
   readonly taskComments?: TaskCommentRepository;
   readonly userTaskNotes?: UserTaskNoteRepository;
+  readonly auditLogs?: AuditLogRepository;
 }
 
 export interface UnitOfWork {

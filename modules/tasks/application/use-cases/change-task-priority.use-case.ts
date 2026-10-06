@@ -62,7 +62,7 @@ export class ChangeTaskPriorityUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -138,9 +138,23 @@ export class ChangeTaskPriorityUseCase {
           }
 
           // E. Aktualizace priority
-          return await tasks.update(task.id, {
+          const priorityChanged = input.priority !== task.priority;
+          const updatedRecord = await tasks.update(task.id, {
             priority: input.priority,
           });
+
+          if (auditLogs && priorityChanged) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_PRIORITY_CHANGED",
+              targetId: task.id,
+              previousState: { priority: task.priority },
+              newState: { priority: input.priority },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

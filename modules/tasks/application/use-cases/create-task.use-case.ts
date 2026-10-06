@@ -86,7 +86,7 @@ export class CreateTaskUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const task = await this.uow.runInTransaction(
-        async ({ boards, memberships, users, areas, tasks }) => {
+        async ({ boards, memberships, users, areas, tasks, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -188,7 +188,7 @@ export class CreateTaskUseCase {
           }
 
           // F. Vytvoření úkolu
-          return await tasks.create({
+          const createdTask = await tasks.create({
             boardId,
             areaId: finalAreaId,
             title: trimmedTitle,
@@ -199,6 +199,28 @@ export class CreateTaskUseCase {
             createdBy: actor.actor_user_id,
             assigneeId: finalAssigneeId,
           });
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "TASK_CREATED",
+              targetId: createdTask.id,
+              previousState: null,
+              newState: {
+                title: createdTask.title,
+                status: createdTask.status,
+                priority: createdTask.priority,
+                areaId: createdTask.areaId,
+                assigneeId: createdTask.assigneeId,
+                dueDate: createdTask.dueDate
+                  ? createdTask.dueDate.toISOString()
+                  : null,
+              },
+            });
+          }
+
+          return createdTask;
         },
       );
 

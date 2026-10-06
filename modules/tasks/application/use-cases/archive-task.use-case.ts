@@ -54,7 +54,7 @@ export class ArchiveTaskUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -130,9 +130,22 @@ export class ArchiveTaskUseCase {
           }
 
           // E. Aktualizace stavu na ARCHIVOVÁNO
-          return await tasks.update(task.id, {
+          const updatedRecord = await tasks.update(task.id, {
             status: "ARCHIVOVÁNO",
           });
+
+          if (auditLogs && task.status !== "ARCHIVOVÁNO") {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_ARCHIVED",
+              targetId: task.id,
+              previousState: { status: task.status },
+              newState: { status: "ARCHIVOVÁNO" },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

@@ -74,7 +74,7 @@ export class UpdateTaskUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -168,10 +168,45 @@ export class UpdateTaskUseCase {
           }
 
           // E. Aktualizace úkolu
-          return await tasks.update(task.id, {
+          const updatedRecord = await tasks.update(task.id, {
             title: trimmedTitle,
             description: input.description,
           });
+
+          if (auditLogs) {
+            if (trimmedTitle !== undefined && trimmedTitle !== task.title) {
+              await auditLogs.log({
+                actorUserId: actor.actor_user_id,
+                boardId: task.boardId,
+                operation: "TASK_TITLE_CHANGED",
+                targetId: task.id,
+                previousState: { title: task.title },
+                newState: { title: trimmedTitle },
+              });
+            }
+
+            if (
+              input.description !== undefined &&
+              input.description !== task.description
+            ) {
+              await auditLogs.log({
+                actorUserId: actor.actor_user_id,
+                boardId: task.boardId,
+                operation: "TASK_DESCRIPTION_CHANGED",
+                targetId: task.id,
+                previousState: {
+                  hasDescription:
+                    task.description !== null && task.description.length > 0,
+                },
+                newState: {
+                  hasDescription:
+                    input.description !== null && input.description.length > 0,
+                },
+              });
+            }
+          }
+
+          return updatedRecord;
         },
       );
 

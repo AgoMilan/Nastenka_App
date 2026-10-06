@@ -63,7 +63,7 @@ export class CreateAreaUseCase {
     // ── 3. Transakční provedení s autorizací a kontrolou unikátnosti ─
     try {
       const area = await this.uow.runInTransaction(
-        async ({ boards, memberships, areas }) => {
+        async ({ boards, memberships, areas, auditLogs }) => {
           if (!areas) {
             throw new Error("AreaRepository není dostupné v UnitOfWork.");
           }
@@ -121,11 +121,27 @@ export class CreateAreaUseCase {
           }
 
           // E. Vytvoření oblasti
-          return await areas.create({
+          const newArea = await areas.create({
             boardId,
             name: trimmedName,
             description: input.description ?? null,
           });
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "AREA_CREATED",
+              targetId: newArea.id,
+              previousState: null,
+              newState: {
+                name: newArea.name,
+                description: newArea.description,
+              },
+            });
+          }
+
+          return newArea;
         },
       );
 

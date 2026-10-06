@@ -57,7 +57,14 @@ export class ChangeTaskAreaUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, areas, tasks, taskParticipants }) => {
+        async ({
+          boards,
+          memberships,
+          areas,
+          tasks,
+          taskParticipants,
+          auditLogs,
+        }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -157,9 +164,23 @@ export class ChangeTaskAreaUseCase {
           }
 
           // F. Aktualizace oblasti úkolu
-          return await tasks.update(task.id, {
+          const areaChanged = task.areaId !== newAreaId;
+          const updatedRecord = await tasks.update(task.id, {
             areaId: newAreaId,
           });
+
+          if (auditLogs && areaChanged) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_AREA_CHANGED",
+              targetId: task.id,
+              previousState: { areaId: task.areaId },
+              newState: { areaId: newAreaId },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

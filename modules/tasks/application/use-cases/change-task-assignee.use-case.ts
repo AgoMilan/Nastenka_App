@@ -59,7 +59,14 @@ export class ChangeTaskAssigneeUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, users, tasks, taskParticipants }) => {
+        async ({
+          boards,
+          memberships,
+          users,
+          tasks,
+          taskParticipants,
+          auditLogs,
+        }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -170,9 +177,23 @@ export class ChangeTaskAssigneeUseCase {
           }
 
           // G. Aktualizace řešitele
-          return await tasks.update(task.id, {
+          const assigneeChanged = task.assigneeId !== newAssigneeId;
+          const updatedRecord = await tasks.update(task.id, {
             assigneeId: newAssigneeId,
           });
+
+          if (auditLogs && assigneeChanged) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_ASSIGNEE_CHANGED",
+              targetId: task.id,
+              previousState: { assigneeId: task.assigneeId },
+              newState: { assigneeId: newAssigneeId },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

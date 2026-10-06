@@ -55,7 +55,7 @@ export class TakeOverTaskUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -139,9 +139,23 @@ export class TakeOverTaskUseCase {
           }
 
           // F. Nastavení Actora jako nového řešitele
-          return await tasks.update(task.id, {
+          const assigneeChanged = task.assigneeId !== actor.actor_user_id;
+          const updatedRecord = await tasks.update(task.id, {
             assigneeId: actor.actor_user_id,
           });
+
+          if (auditLogs && assigneeChanged) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_ASSIGNEE_CHANGED",
+              targetId: task.id,
+              previousState: { assigneeId: task.assigneeId },
+              newState: { assigneeId: actor.actor_user_id },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

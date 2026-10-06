@@ -59,7 +59,7 @@ export class DeleteAreaUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       await this.uow.runInTransaction(
-        async ({ boards, memberships, areas, tasks }) => {
+        async ({ boards, memberships, areas, tasks, auditLogs }) => {
           if (!areas) {
             throw new Error("AreaRepository není dostupné v UnitOfWork.");
           }
@@ -124,6 +124,20 @@ export class DeleteAreaUseCase {
 
           // F. Fyzické smazání oblasti (PostgreSQL CASCADE se postará o relační vazby v DB)
           await areas.delete(area.id);
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: area.boardId,
+              operation: "AREA_DELETED",
+              targetId: area.id,
+              previousState: {
+                name: area.name,
+                description: area.description,
+              },
+              newState: null,
+            });
+          }
         },
       );
 

@@ -6,4 +6,5 @@ export { DrizzleTaskRepository } from "./drizzle-task-repository.ts";
 export { DrizzleTaskParticipantRepository } from "./drizzle-task-participant-repository.ts";
 export { DrizzleUserTaskOrderRepository } from "./drizzle-user-task-order-repository.ts";
 export { DrizzleTaskCommentRepository } from "./drizzle-task-comment-repository.ts";
+export { DrizzleAuditLogRepository } from "./drizzle-audit-log-repository.ts";
 export { DrizzleUnitOfWork } from "./drizzle-unit-of-work.ts";

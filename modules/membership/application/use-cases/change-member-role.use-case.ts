@@ -76,7 +76,7 @@ export class ChangeMemberRoleUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships }) => {
+        async ({ boards, memberships, auditLogs }) => {
           // A. Načtení Nástěnky s uzamčením pro souběh
           const board = await boards.findByIdForUpdate(boardId);
           if (!board) {
@@ -154,6 +154,17 @@ export class ChangeMemberRoleUseCase {
 
           // H. Provedení změny role
           await memberships.updateRole(boardId, targetUserId, newRole);
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "MEMBER_ROLE_CHANGED",
+              targetId: targetUserId,
+              previousState: { role: targetMembership.role },
+              newState: { role: newRole },
+            });
+          }
 
           return {
             ...targetMembership,

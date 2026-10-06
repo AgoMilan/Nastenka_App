@@ -73,6 +73,7 @@ export class LeaveBoardUseCase {
           tasks,
           taskParticipants,
           userTaskOrders,
+          auditLogs,
         }) => {
           // A. Načtení Nástěnky s uzamčením pro souběh
           const board = await boards.findByIdForUpdate(boardId);
@@ -158,6 +159,17 @@ export class LeaveBoardUseCase {
               boardId,
               actor.actor_user_id,
             );
+          }
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "MEMBER_LEFT_BOARD",
+              targetId: actor.actor_user_id,
+              previousState: { role: memberRecord.role },
+              newState: null,
+            });
           }
 
           return {

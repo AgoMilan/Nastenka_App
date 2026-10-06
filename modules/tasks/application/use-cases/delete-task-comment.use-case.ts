@@ -66,7 +66,14 @@ export class DeleteTaskCommentUseCase {
     // ── 3. Transakční provedení v Unit of Work ─────────────────
     try {
       await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants, taskComments }) => {
+        async ({
+          boards,
+          memberships,
+          tasks,
+          taskParticipants,
+          taskComments,
+          auditLogs,
+        }) => {
           if (!tasks || !taskComments) {
             throw new Error(
               "TaskRepository nebo TaskCommentRepository není dostupné v UnitOfWork.",
@@ -178,6 +185,17 @@ export class DeleteTaskCommentUseCase {
 
           // F. Provedení smazání komentáře
           await taskComments.delete(commentId);
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_COMMENT_DELETED",
+              targetId: comment.id,
+              previousState: { taskId: task.id },
+              newState: null,
+            });
+          }
         },
       );
 

@@ -70,7 +70,7 @@ export class ChangeTaskStatusUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -155,10 +155,24 @@ export class ChangeTaskStatusUseCase {
           }
 
           // F. Aktualizace stavu úkolu
-          return await tasks.update(task.id, {
+          const statusChanged = input.newStatus !== task.status;
+          const updatedRecord = await tasks.update(task.id, {
             status: input.newStatus,
             ...(completedAt !== undefined ? { completedAt } : {}),
           });
+
+          if (auditLogs && statusChanged) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_STATUS_CHANGED",
+              targetId: task.id,
+              previousState: { status: task.status },
+              newState: { status: input.newStatus },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

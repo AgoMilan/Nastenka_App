@@ -12,6 +12,7 @@ import { DrizzleTaskParticipantRepository } from "./drizzle-task-participant-rep
 import { DrizzleUserTaskOrderRepository } from "./drizzle-user-task-order-repository.ts";
 import { DrizzleTaskCommentRepository } from "./drizzle-task-comment-repository.ts";
 import { DrizzleUserTaskNoteRepository } from "./drizzle-user-task-note-repository.ts";
+import { DrizzleAuditLogRepository } from "./drizzle-audit-log-repository.ts";
 
 export class DrizzleUnitOfWork implements UnitOfWork {
   private readonly db: Database;
@@ -35,6 +36,7 @@ export class DrizzleUnitOfWork implements UnitOfWork {
         userTaskOrders: new DrizzleUserTaskOrderRepository(txDb),
         taskComments: new DrizzleTaskCommentRepository(txDb),
         userTaskNotes: new DrizzleUserTaskNoteRepository(txDb),
+        auditLogs: new DrizzleAuditLogRepository(txDb),
       };
       return await work(repos);
     });

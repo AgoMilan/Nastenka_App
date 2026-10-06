@@ -84,7 +84,7 @@ export class CreateBoardUseCase {
     // ── 4. Atomické vytvoření v transakci ──────────────────────
     try {
       const result = await this.uow.runInTransaction(
-        async ({ boards, memberships, users }) => {
+        async ({ boards, memberships, users, auditLogs }) => {
           // Pokud je specifikován jiný vlastník pro ADMINa, ověříme jeho existenci a aktivitu
           if (
             input.targetUserId &&
@@ -113,6 +113,23 @@ export class CreateBoardUseCase {
             userId: ownerUserId,
             role: "OWNER",
           });
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: board.id,
+              operation: "BOARD_CREATED",
+              targetId: board.id,
+              previousState: null,
+              newState: {
+                name: board.name,
+                description: board.description,
+              },
+              metadata: {
+                ownerUserId,
+              },
+            });
+          }
 
           return { board, ownerMembership };
         },

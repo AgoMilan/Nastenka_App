@@ -64,7 +64,7 @@ export class ChangeTaskDueDateUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updated = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
           }
@@ -140,9 +140,30 @@ export class ChangeTaskDueDateUseCase {
           }
 
           // E. Aktualizace termínu
-          return await tasks.update(task.id, {
+          const oldTime = task.dueDate ? task.dueDate.getTime() : null;
+          const newTime = parsedDueDate ? parsedDueDate.getTime() : null;
+          const dueDateChanged = oldTime !== newTime;
+
+          const updatedRecord = await tasks.update(task.id, {
             dueDate: parsedDueDate,
           });
+
+          if (auditLogs && dueDateChanged) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_DUE_DATE_CHANGED",
+              targetId: task.id,
+              previousState: {
+                dueDate: task.dueDate ? task.dueDate.toISOString() : null,
+              },
+              newState: {
+                dueDate: parsedDueDate ? parsedDueDate.toISOString() : null,
+              },
+            });
+          }
+
+          return updatedRecord;
         },
       );
 

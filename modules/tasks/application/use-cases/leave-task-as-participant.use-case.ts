@@ -53,7 +53,7 @@ export class LeaveTaskAsParticipantUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks || !taskParticipants) {
             throw new Error(
               "TaskRepository nebo TaskParticipantRepository není dostupné v UnitOfWork.",
@@ -136,6 +136,17 @@ export class LeaveTaskAsParticipantUseCase {
             task.id,
             actor.actor_user_id,
           );
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_PARTICIPANT_REMOVED",
+              targetId: task.id,
+              previousState: { participantId: actor.actor_user_id },
+              newState: null,
+            });
+          }
         },
       );
 

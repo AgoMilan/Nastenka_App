@@ -74,7 +74,7 @@ export class TransferOwnershipUseCase {
     // ── 3. Transakční provedení s kontrolou invariantů ────────
     try {
       const result = await this.uow.runInTransaction(
-        async ({ boards, memberships, users }) => {
+        async ({ boards, memberships, users, auditLogs }) => {
           // A. Kontrola existence a stavu Nástěnky s uzamčením řádku pro souběh (FOR UPDATE)
           const board = await boards.findByIdForUpdate(boardId);
           if (!board) {
@@ -172,6 +172,24 @@ export class TransferOwnershipUseCase {
             previousOwnerNewRole,
           );
           await memberships.updateRole(boardId, targetMember.userId, "OWNER");
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "BOARD_OWNER_TRANSFERRED",
+              targetId: boardId,
+              previousState: {
+                ownerUserId: currentOwner.userId,
+              },
+              newState: {
+                ownerUserId: targetMember.userId,
+              },
+              metadata: {
+                previousOwnerNewRole,
+              },
+            });
+          }
 
           return {
             boardId,

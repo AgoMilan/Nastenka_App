@@ -77,6 +77,7 @@ export class RemoveMemberUseCase {
           tasks,
           taskParticipants,
           userTaskOrders,
+          auditLogs,
         }) => {
           // A. Načtení Nástěnky s uzamčením pro souběh
           const board = await boards.findByIdForUpdate(boardId);
@@ -166,6 +167,17 @@ export class RemoveMemberUseCase {
           // H. Vyčištění osobního pořadí úkolů odebraného člena
           if (userTaskOrders) {
             await userTaskOrders.deleteByBoardAndUser(boardId, targetUserId);
+          }
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "MEMBER_REMOVED",
+              targetId: targetUserId,
+              previousState: { role: targetMembership.role },
+              newState: null,
+            });
           }
 
           return {

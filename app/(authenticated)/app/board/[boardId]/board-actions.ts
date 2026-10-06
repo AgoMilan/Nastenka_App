@@ -4,8 +4,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { resolveActorContext } from "@/infrastructure/auth/index.ts";
 import { getDb } from "@/infrastructure/database/index.ts";
-import { DrizzleBoardRepository } from "@/infrastructure/database/repositories/drizzle-board-repository.ts";
-import { DrizzleMembershipRepository } from "@/infrastructure/database/repositories/drizzle-membership-repository.ts";
+import { DrizzleUnitOfWork } from "@/infrastructure/database/repositories/drizzle-unit-of-work.ts";
 import { UpdateBoardUseCase } from "@/modules/boards/application/use-cases/index.ts";
 import { updateBoardSchema } from "@/modules/boards/api/dto/board.dto.ts";
 
@@ -67,9 +66,8 @@ export async function updateBoardAction(
   }
 
   const db = getDb();
-  const boardRepo = new DrizzleBoardRepository(db);
-  const membershipRepo = new DrizzleMembershipRepository(db);
-  const useCase = new UpdateBoardUseCase(boardRepo, membershipRepo);
+  const uow = new DrizzleUnitOfWork(db);
+  const useCase = new UpdateBoardUseCase(uow);
 
   const result = await useCase.execute(actor, {
     boardId,

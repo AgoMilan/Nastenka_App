@@ -72,7 +72,14 @@ export class AddTaskCommentUseCase {
     // ── 3. Transakční provedení v Unit of Work ─────────────────
     try {
       const result = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants, taskComments }) => {
+        async ({
+          boards,
+          memberships,
+          tasks,
+          taskParticipants,
+          taskComments,
+          auditLogs,
+        }) => {
           if (!tasks || !taskComments) {
             throw new Error(
               "TaskRepository nebo TaskCommentRepository není dostupné v UnitOfWork.",
@@ -169,6 +176,19 @@ export class AddTaskCommentUseCase {
             authorId: actor.actor_user_id,
             content,
           });
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_COMMENT_CREATED",
+              targetId: newComment.id,
+              previousState: null,
+              newState: {
+                taskId: task.id,
+              },
+            });
+          }
 
           return newComment;
         },

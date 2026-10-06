@@ -73,7 +73,7 @@ export class UpdateAreaUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const updatedArea = await this.uow.runInTransaction(
-        async ({ boards, memberships, areas }) => {
+        async ({ boards, memberships, areas, auditLogs }) => {
           if (!areas) {
             throw new Error("AreaRepository není dostupné v UnitOfWork.");
           }
@@ -142,10 +142,35 @@ export class UpdateAreaUseCase {
           }
 
           // F. Aktualizace oblasti
-          return await areas.update(area.id, {
+          const nameChanged =
+            trimmedName !== undefined && trimmedName !== area.name;
+          const descChanged =
+            input.description !== undefined &&
+            input.description !== area.description;
+
+          const res = await areas.update(area.id, {
             name: trimmedName,
             description: input.description,
           });
+
+          if (auditLogs && (nameChanged || descChanged)) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: area.boardId,
+              operation: "AREA_UPDATED",
+              targetId: area.id,
+              previousState: {
+                name: area.name,
+                description: area.description,
+              },
+              newState: {
+                name: res.name,
+                description: res.description,
+              },
+            });
+          }
+
+          return res;
         },
       );
 

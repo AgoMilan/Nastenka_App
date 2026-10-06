@@ -70,6 +70,7 @@ export class DeleteTaskUseCase {
           tasks,
           taskParticipants,
           userTaskOrders,
+          auditLogs,
         }) => {
           if (!tasks) {
             throw new Error("TaskRepository není dostupné v UnitOfWork.");
@@ -155,6 +156,21 @@ export class DeleteTaskUseCase {
             await userTaskOrders.deleteByTaskId(task.id);
           }
           await tasks.delete(task.id);
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_DELETED",
+              targetId: task.id,
+              previousState: {
+                title: task.title,
+                status: task.status,
+                priority: task.priority,
+              },
+              newState: null,
+            });
+          }
         },
       );
 

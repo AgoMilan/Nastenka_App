@@ -80,7 +80,7 @@ export class AddMemberUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const created = await this.uow.runInTransaction(
-        async ({ boards, memberships, users }) => {
+        async ({ boards, memberships, users, auditLogs }) => {
           // A. Načtení Nástěnky s uzamčením pro souběh
           const board = await boards.findByIdForUpdate(boardId);
           if (!board) {
@@ -155,11 +155,24 @@ export class AddMemberUseCase {
           }
 
           // G. Vytvoření členství
-          return await memberships.create({
+          const newMember = await memberships.create({
             boardId,
             userId: targetUserId,
             role: desiredRole,
           });
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId,
+              operation: "MEMBER_ADDED",
+              targetId: targetUserId,
+              previousState: null,
+              newState: { role: desiredRole },
+            });
+          }
+
+          return newMember;
         },
       );
 

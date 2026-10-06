@@ -57,7 +57,7 @@ export class JoinTaskAsParticipantUseCase {
     // ── 3. Transakční provedení ────────────────────────────────
     try {
       const participant = await this.uow.runInTransaction(
-        async ({ boards, memberships, tasks, taskParticipants }) => {
+        async ({ boards, memberships, tasks, taskParticipants, auditLogs }) => {
           if (!tasks || !taskParticipants) {
             throw new Error(
               "TaskRepository nebo TaskParticipantRepository není dostupné v UnitOfWork.",
@@ -150,11 +150,24 @@ export class JoinTaskAsParticipantUseCase {
           }
 
           // G. Přidání spoluřešitele
-          return await taskParticipants.addParticipant(
+          const createdParticipant = await taskParticipants.addParticipant(
             task.id,
             actor.actor_user_id,
             "SPOLUŘEŠITEL",
           );
+
+          if (auditLogs) {
+            await auditLogs.log({
+              actorUserId: actor.actor_user_id,
+              boardId: task.boardId,
+              operation: "TASK_PARTICIPANT_ADDED",
+              targetId: task.id,
+              previousState: null,
+              newState: { participantId: actor.actor_user_id },
+            });
+          }
+
+          return createdParticipant;
         },
       );
 
