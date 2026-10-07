@@ -227,5 +227,25 @@ describe("Better Auth server foundation & ActorContext", () => {
     assert.ok(
       (options.trustedOrigins as string[]).includes("http://192.168.0.53:3000"),
     );
+
+    // Test produkčního NAS prostředí (192.168.0.250:3000)
+    const nasProdEnv: Env = {
+      ...mockEnv,
+      NODE_ENV: "production",
+      BETTER_AUTH_URL: "http://192.168.0.250:3000",
+      BETTER_AUTH_TRUSTED_ORIGINS: "http://192.168.0.250:3000",
+    };
+    const nasResolved = resolveTrustedOrigins(nasProdEnv);
+    assert.ok(nasResolved.includes("http://192.168.0.250:3000"));
+    const nasOptions = createBetterAuthOptions(
+      {} as unknown as Database,
+      nasProdEnv,
+    );
+    assert.equal(nasOptions.baseURL, "http://192.168.0.250:3000");
+    assert.ok(
+      (nasOptions.trustedOrigins as string[]).includes(
+        "http://192.168.0.250:3000",
+      ),
+    );
   });
 });

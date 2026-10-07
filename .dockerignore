@@ -1,0 +1,50 @@
+# ==============================================================================
+# Nástěnka – .dockerignore
+# ==============================================================================
+# Zajišťuje hermetický build a chrání před únikem citlivých údajů nebo artefaktů.
+# ==============================================================================
+
+# Git a projektová metadata
+.git/
+.github/
+.agents/
+AGENTS.md
+README.md
+
+# Lokální tajné proměnné a konfigurace prostředí (STRIKTNÍ ZÁKAZ PŘENOSU)
+.env*
+!.env.example
+!.env.production.example
+
+# Build výstupy a mezipaměť
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Lokální závislosti (budou deterministicky staženy v Dockeru přes npm ci)
+node_modules/
+
+# Testy a reporty
+tests/
+coverage/
+playwright-report/
+test-results/
+
+# Dokumentace
+docs/
+
+# IDE a operační systém
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.log
+.tmp/
+
+# Lokální pomocné skripty pro Windows
+Nastenka_Start.bat

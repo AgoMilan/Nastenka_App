@@ -4,20 +4,27 @@ const allowedDevOrigins = [
   "192.168.0.53:3000",
 ];
 
+function addOrigin(originStr) {
+  const trimmed = originStr?.trim();
+  if (!trimmed) return;
+  try {
+    const parsed = new URL(trimmed);
+    allowedDevOrigins.push(parsed.hostname);
+    if (parsed.port) {
+      allowedDevOrigins.push(`${parsed.hostname}:${parsed.port}`);
+    }
+  } catch {
+    allowedDevOrigins.push(trimmed);
+  }
+}
+
+if (process.env.BETTER_AUTH_URL) {
+  addOrigin(process.env.BETTER_AUTH_URL);
+}
+
 if (process.env.BETTER_AUTH_TRUSTED_ORIGINS) {
   for (const origin of process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")) {
-    const trimmed = origin.trim();
-    if (trimmed) {
-      try {
-        const parsed = new URL(trimmed);
-        allowedDevOrigins.push(parsed.hostname);
-        if (parsed.port) {
-          allowedDevOrigins.push(`${parsed.hostname}:${parsed.port}`);
-        }
-      } catch {
-        allowedDevOrigins.push(trimmed);
-      }
-    }
+    addOrigin(origin);
   }
 }
 
