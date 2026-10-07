@@ -13,7 +13,7 @@ Systém důsledně rozlišuje vývojové a produkční prostředí:
 Windows PC (C:\Users\Milan\Projekty\Nastenka)
    │ (npm run dev na http://localhost:3000)
    ▼
-PostgreSQL na Synology NAS (192.168.0.250:5432)
+PostgreSQL na Synology NAS (192.168.0.250:5439)
 ```
 
 ### Produkční prostředí (Production / Test)
@@ -25,13 +25,13 @@ Synology NAS (DS725+)
    │
    ▼ Container Manager / Docker
 Nástěnka kontejner (Alpine Node.js 20, non-root nextjs:1001)
-   │ (DATABASE_URL)
+   │ (DATABASE_URL na port 5439)
    ▼
 Existující PostgreSQL server na NAS (nesmí se měnit ani přesouvat)
 ```
 
 > [!IMPORTANT]
-> Nástěnka **nevytváří ani nepřidává vlastní PostgreSQL kontejner**. Využívá již běžící, existující PostgreSQL databázi na NAS společně s aplikací Pronájmy.
+> Nástěnka **nevytváří ani nepřidává vlastní PostgreSQL kontejner**. Využívá již běžící, existující PostgreSQL databázi na NAS společně s aplikací Pronájmy (port `5439`).
 
 ---
 
@@ -43,7 +43,7 @@ Existující PostgreSQL server na NAS (nesmí se měnit ani přesouvat)
    ```
 2. Do tohoto adresáře se nakopírují soubory:
    - `Dockerfile`
-   - `docker-compose.yml`
+   - `docker-compose.yml` (obsahuje `build: context: . dockerfile: Dockerfile` pro sestavení přímo na NAS)
    - `.dockerignore`
    - `package.json`
    - `package-lock.json`
@@ -57,7 +57,7 @@ Existující PostgreSQL server na NAS (nesmí se měnit ani přesouvat)
    ```ini
    NODE_ENV=production
    PORT=3000
-   DATABASE_URL=postgresql://<DB_USER>:<DB_PASSWORD>@192.168.0.250:5432/<DB_NAME>
+   DATABASE_URL=postgresql://<DB_USER>:<DB_PASSWORD>@192.168.0.250:5439/<DB_NAME>
    BETTER_AUTH_SECRET=<silny_nahodny_klic_min_32_znaku>
    BETTER_AUTH_URL=http://192.168.0.250:3000
    BETTER_AUTH_TRUSTED_ORIGINS=http://192.168.0.250:3000

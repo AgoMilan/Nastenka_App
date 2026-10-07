@@ -376,10 +376,10 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 - **Koncept a cíl:**
   - Příprava projektu Nástěnka pro stabilní a bezpečný produkční běh v Dockeru na Synology NAS (DS725+ / Container Manager), dostupný v LAN na `http://192.168.0.250:3000`.
 - **Infrastrukturní architektura:**
-  - **Existující PostgreSQL:** Kontejner Nástěnky se připojuje k již běžícímu PostgreSQL serveru na NAS (společnému s aplikací Pronájmy) přes `DATABASE_URL`. Žádný nový PostgreSQL kontejner nebyl přidán ani měněn.
+  - **Existující PostgreSQL:** Kontejner Nástěnky se připojuje k již běžícímu PostgreSQL serveru na NAS (společnému s aplikací Pronájmy) na portu 5439 přes `DATABASE_URL`. Žádný nový PostgreSQL kontejner nebyl přidán ani měněn.
   - **Multi-stage Dockerfile:** Postaven na `node:20-alpine` (libc6-compat), deterministická instalace `npm ci`, oddělená fáze pro sestavení (`npm run build`), příprava čistých produkčních závislostí (`npm ci --omit=dev`), spouštění pod neprivilegovaným uživatelem `nextjs:nodejs` (UID 1001). Kontejner se spouští přes standardní `npm run start`.
   - **.dockerignore:** Hermetický build striktně chránící před únikem lokálních konfigurací (`.env*`, `.git`, `tests`, IDE soubory, logy).
-  - **docker-compose.yml:** Provozní definice pro Synology Container Manager na portu 3000 (`3000:3000`), s restart policy `unless-stopped`, konfigurací rotace logů (max-size 10m, max-file 3) a liveness probe testem.
+  - **docker-compose.yml:** Provozní definice pro Synology Container Manager na portu 3000 (`3000:3000`), obsahující přímý `build` kontext z Dockerfile pro sestavení image přímo na NAS, s restart policy `unless-stopped`, konfigurací rotace logů (max-size 10m, max-file 3) a liveness probe testem.
   - **Healthcheck & Monitoring:** Endpoint `/api/health` vracející HTTP 200 `{ status: "ok", timestamp: ... }` pro liveness probe v Dockeru a Synology Container Manageru bez zatížení databáze.
   - **Better Auth & LAN podpora:** Konfigurace `BETTER_AUTH_URL=http://192.168.0.250:3000` a `BETTER_AUTH_TRUSTED_ORIGINS`, integrace do `next.config.mjs` pro Server Actions CSRF ochranu bez narušení lokálního vývoje na PC (`http://localhost:3000`).
   - **Šablona produkční konfigurace:** `.env.production.example` dokumentující všechny povinné proměnné pro `/docker/App_nastenka/.env` na NAS s doporučením práv `chmod 600`.

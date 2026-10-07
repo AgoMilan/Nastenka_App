@@ -7583,7 +7583,7 @@ Windows PC (C:\Users\Milan\Projekty\Nastenka)
    ↓
 Next.js dev server (npm run dev na http://localhost:3000)
    ↓ (LAN síťové spojení)
-PostgreSQL na Synology NAS (192.168.0.250:5432)
+PostgreSQL na Synology NAS (192.168.0.250:5439)
 ```
 
 #### Production / Test (Synology NAS DS725+)
@@ -7595,14 +7595,14 @@ http://192.168.0.250:3000
 Synology NAS (Container Manager / Docker)
    ↓
 Nástěnka kontejner (Alpine Linux, Node.js 20 LTS, non-root nextjs:1001)
-   ↓ (lokální připojení přes DATABASE_URL)
-existující PostgreSQL server na NAS (společný s aplikací Pronájmy)
+   ↓ (lokální připojení přes DATABASE_URL na port 5439)
+existující PostgreSQL server na NAS (společný s aplikací Pronájmy, port 5439)
 ```
 
 ### 37.2 Závazné infrastruktury principy
 
 1. **Žádný nový PostgreSQL kontejner v Compose:**
-   Aplikace Nástěnka se připojuje k již existujícímu PostgreSQL serveru na Synology NAS. Docker Compose nesmí obsahovat službu `postgres:` ani jiný nový databázový engine.
+   Aplikace Nástěnka se připojuje k již existujícímu PostgreSQL serveru na Synology NAS (port 5439). Docker Compose nesmí obsahovat službu `postgres:` ani jiný nový databázový engine.
 2. **Kontejnerizace Next.js 16 (App Router):**
    Multi-stage `Dockerfile` (`node:20-alpine`) s hermetickým sestavením:
    - Fáze `deps`: instalace z `package-lock.json` přes `npm ci`.
