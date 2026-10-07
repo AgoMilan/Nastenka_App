@@ -238,9 +238,17 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 - Centrální auditní stopa Audit Trail v1 pro 26 doménových událostí napříč Board, Membership, Area, Task a Komentáři s transakčním zápisem do tabulky `audit_logs`, no-op ochranou a striktní privacy policy (žádný text popisu, žádný text komentářů, absolutní zákaz auditu soukromých poznámek).
 - Audit Trail UI: přehledné zobrazení chronologické historie změn úkolu (`TaskAuditHistoryDialog`) přímo z karty `TaskCard` i `MyTaskCard` a historie celé nástěnky (`BoardAuditHistoryDialog`, `BoardHistoryButton`) v hlavičce detailu.
 - Časová osa `AuditTimeline` s loading skeletem, empty statem, error handlingem, formátováním všech 25 událostí do češtiny (`formatAuditEvent`), dávkovým načítáním jmen autorů a přísnou privacy ochranou bez zobrazení citlivých textů.
+- **Docker & NAS Produkční Runtime (STEP 10):**
+  - Produkční multi-stage `Dockerfile` (`node:20-alpine`) s hermetickým sestavením, neprivilegovaným uživatelem `nextjs:nodejs` (UID 1001), vestavěným healthcheckem `/api/health` a spouštěním přes standardní `npm run start`.
+  - Produkční `docker-compose.yml` připravený pro Synology Container Manager na portu 3000 (`3000:3000`), s politikou `unless-stopped` a rotací logů (max. 10 MB, 3 soubory).
+  - Přímé napojení na existující PostgreSQL server na NAS (`DATABASE_URL`) bez vytváření vlastního databázového kontejneru v Compose.
+  - Plná podpora LAN produkčního běhu na `http://192.168.0.250:3000` v Better Auth (`BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`) i v Next.js povolených dev originech bez narušení lokálního vývoje na PC (`http://localhost:3000`).
+  - Liveness probe endpoint `/api/health` vracející HTTP 200 a `{ status: "ok", timestamp: ... }`.
+  - Vzor bezpečné konfigurace `.env.production.example` a striktní oddělení databázových migrací od automatického startu kontejneru.
 - Autoritativní server-side autorizace a cross-board bezpečnostní ochrana.
 
 ### Co ještě není implementováno
+- Přílohy k úkolům (Attachments – plánováno v samostatném STEP 11 s persistentním úložištěm na NAS).
 - Real-time notifikace, e-mailové notifikace, outbox worker.
 
 ---
@@ -273,8 +281,9 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 - Aplikační use cases pro Nástěnku, Oblasti, Úkoly, Správu členství, Osobní řazení úkolů, Osobní pracovní prostor Moje úkoly, Komentáře, Soukromé poznámky i Auditní stopu jsou plně dokončeny na úrovni aplikační vrstvy; UI komponenty a Server Actions pro Nástěnky (vytvoření, detail, přepínač, editace metadat, historie změn nástěnky), Oblasti, vytváření/zobrazení/editaci Úkolů, workflow stavů, převzetí úkolu, správu spoluřešitelů, archivaci, mazání, historii změn úkolu, Správu členství, Osobní řazení úkolů, Osobní prostor Moje úkoly (včetně editace, Quick Status, historie a soukromých poznámek) i Komentáře a diskuzi k úkolům jsou hotové.
 - Outbox infrastruktura je odložena (deferred) – připraveno DB schéma, aplikační integrace proběhne v samostatném kroku.
-- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (906 testů PASS).
-- Produkční databázové migrace nejsou automatizované (vyžadují ruční `drizzle-kit migrate`).
+- `npm test` spouští celou testovací sadu v Node.js prostředí přes `node --conditions=react-server --test "tests/unit/*.test.ts" "tests/api/*.test.ts"` (907 testů PASS).
+- Produkční databázové migrace nejsou automatizované (vyžadují explicitní `drizzle-kit migrate` z PC nebo kontejneru; nikdy se nespouští automaticky při startu kontejneru).
+- **Provozní stav (Stateless):** Aplikace nezapisuje žádná data do lokálního disku/souborového systému; veškerý stav a relace jsou ukládány do PostgreSQL. Přílohy k úkolům budou řešeny samostatně v rámci STEP 11.
 
 ---
 
@@ -282,6 +291,7 @@ Zde jsou uvedeny hlavní funkce, které projekt aktuálně poskytuje.
 
 | Datum | Změna |
 |---|---|
+| 7. 10. 2026 | STEP 10 – NAS Deployment & Persistent Runtime (příprava produkčního běhu v Dockeru na Synology NAS DS725+, multi-stage Dockerfile s Alpine Node 20 a non-root uživatelem nextjs:1001, docker-compose.yml napojený na existující PostgreSQL bez duplikace DB kontejneru, liveness healthcheck /api/health s HTTP 200, Better Auth a Next.js podpora pro LAN http://192.168.0.250:3000, vzor produkční konfigurace .env.production.example, bezpečné migrace Drizzle bez vystavení secrets, 1 nový test, 907 celkem) |
 | 6. 10. 2026 | STEP 9B-UI – Audit Trail UI (zobrazení chronologické historie aktivit úkolů i nástěnky, modální dialogy TaskAuditHistoryDialog a BoardAuditHistoryDialog, vizuální časová osa AuditTimeline s loading skeleton/empty/error stavy, tlačítka Historie na TaskCard, MyTaskCard i v hlavičce nástěnky přes BoardHistoryButton, čtecí use casy GetTaskAuditHistoryUseCase a GetBoardAuditHistoryUseCase, prezentační formátovač formatAuditEvent pokrývající všech 25 událostí v češtině, složené indexy na audit_logs pro boardId a targetId s timestampem, Drizzle migrace 0005_boring_network.sql, přísná privacy ochrana textu popisu a komentářů, 25 nových testů, 906 celkem) |
 | 6. 10. 2026 | STEP 9B – Audit Trail v1 (centrální append-only transakční auditní logování, Audit Event Catalog v1 s 26 událostmi napříč Board, Membership, Area, Task a Comments, DrizzleAuditLogRepository zapojený do UnitOfWork, atomický rollback při selhání auditu, striktní privacy pravidla vylučující text popisu a komentáře, absolutní zákaz auditování privátních poznámek, no-op ochrana, 26 nových unit testů, 881 celkem) |
 | 6. 10. 2026 | STEP 9A – Quick Status v „Moje práce“ (rychlá změna stavu úkolu přímo z karty MyTaskCard bez nutnosti otevírat EditTaskDialog, znovupoužití changeTaskStatusAction a ChangeTaskStatusUseCase, TASK_CHANGE_STATUS v TaskPolicy, read-only ochrana archivu TASK_ARCHIVED, řízení completedAt, obousměrná revalidace /app/board/[boardId] i /app/my-work, 16 nových unit testů, 855 celkem) |

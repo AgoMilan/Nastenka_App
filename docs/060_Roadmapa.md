@@ -45,6 +45,7 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
 | STEP 9A | Quick Status v „Moje práce“ (rychlá změna stavu úkolu přímo z karty MyTaskCard bez nutnosti otevírat EditTaskDialog, znovupoužití changeTaskStatusAction a ChangeTaskStatusUseCase, TASK_CHANGE_STATUS v TaskPolicy, read-only ochrana archivu TASK_ARCHIVED, řízení completedAt, obousměrná revalidace /app/board/[boardId] i /app/my-work, 16 nových unit testů, 855 celkem) | DONE | 6. 10. 2026 |
 | STEP 9B | Audit Trail v1 (centrální append-only transakční auditní logování, Audit Event Catalog v1 s 26 událostmi napříč Board, Membership, Area, Task a Comments, DrizzleAuditLogRepository zapojený do UnitOfWork, atomický rollback při selhání auditu, striktní privacy pravidla vylučující text popisu a komentáře, absolutní zákaz auditování privátních poznámek, no-op ochrana, 26 nových unit testů, 881 celkem) | DONE | 6. 10. 2026 |
 | STEP 9B-UI | Audit Trail UI (zobrazení chronologické historie aktivit úkolů i nástěnky, dialogy TaskAuditHistoryDialog a BoardAuditHistoryDialog, vizuální osa AuditTimeline, tlačítka Historie na kartách i v hlavičce nástěnky, GetTaskAuditHistoryUseCase, GetBoardAuditHistoryUseCase, formatAuditEvent pro 25 událostí v češtině, složené indexy na audit_logs, 25 nových testů, 906 celkem) | DONE | 6. 10. 2026 |
+| STEP 10 | NAS Deployment & Persistent Runtime (produkční Docker multi-stage build s Alpine Node 20 a non-root uživatelem nextjs:1001, docker-compose.yml pro Synology Container Manager bez duplikace PostgreSQL, liveness healthcheck /api/health s HTTP 200, Better Auth a Next.js konfigurace pro LAN http://192.168.0.250:3000, vzor .env.production.example, postup bezpečných Drizzle migrací z PC/NAS bez secrets, 1 nový test, 907 celkem) | DONE | 7. 10. 2026 |
 
 ### Podrobný rozsah dokončených kroků:
 
@@ -371,6 +372,21 @@ Sem se zapisují dokončené a ověřené funkce, etapy nebo významné změny.
   - `getTaskAuditHistoryAction` a `getBoardAuditHistoryAction` v `app/(authenticated)/app/board/[boardId]/audit-actions.ts` se serverovým `resolveActorContext` a validací vstupů.
 - **Testy a Quality Gates:** 25 nových unit testů v `tests/unit/audit-trail-ui.test.ts` pokrývajících use casy, autorizaci, limity, cross-board ochranu, formatter všech 25 událostí i privacy invarianty, celkem 906/906 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
 
+#### STEP 10 – NAS Deployment & Persistent Runtime (Dokončeno)
+- **Koncept a cíl:**
+  - Příprava projektu Nástěnka pro stabilní a bezpečný produkční běh v Dockeru na Synology NAS (DS725+ / Container Manager), dostupný v LAN na `http://192.168.0.250:3000`.
+- **Infrastrukturní architektura:**
+  - **Existující PostgreSQL:** Kontejner Nástěnky se připojuje k již běžícímu PostgreSQL serveru na NAS (společnému s aplikací Pronájmy) přes `DATABASE_URL`. Žádný nový PostgreSQL kontejner nebyl přidán ani měněn.
+  - **Multi-stage Dockerfile:** Postaven na `node:20-alpine` (libc6-compat), deterministická instalace `npm ci`, oddělená fáze pro sestavení (`npm run build`), příprava čistých produkčních závislostí (`npm ci --omit=dev`), spouštění pod neprivilegovaným uživatelem `nextjs:nodejs` (UID 1001). Kontejner se spouští přes standardní `npm run start`.
+  - **.dockerignore:** Hermetický build striktně chránící před únikem lokálních konfigurací (`.env*`, `.git`, `tests`, IDE soubory, logy).
+  - **docker-compose.yml:** Provozní definice pro Synology Container Manager na portu 3000 (`3000:3000`), s restart policy `unless-stopped`, konfigurací rotace logů (max-size 10m, max-file 3) a liveness probe testem.
+  - **Healthcheck & Monitoring:** Endpoint `/api/health` vracející HTTP 200 `{ status: "ok", timestamp: ... }` pro liveness probe v Dockeru a Synology Container Manageru bez zatížení databáze.
+  - **Better Auth & LAN podpora:** Konfigurace `BETTER_AUTH_URL=http://192.168.0.250:3000` a `BETTER_AUTH_TRUSTED_ORIGINS`, integrace do `next.config.mjs` pro Server Actions CSRF ochranu bez narušení lokálního vývoje na PC (`http://localhost:3000`).
+  - **Šablona produkční konfigurace:** `.env.production.example` dokumentující všechny povinné proměnné pro `/docker/App_nastenka/.env` na NAS s doporučením práv `chmod 600`.
+  - **Řízené databázové migrace:** Produkční kontejner nespouští migrace automaticky při startu; dokumentován bezpečný postup spuštění Drizzle migrací z vývojového PC (`node --env-file=.env.production ./node_modules/drizzle-kit/bin.cjs migrate`) nebo jednorázově na NAS před startem aplikace.
+  - **Ověření bezstavovosti:** Ověřeno, že aplikace nezapisuje do lokálního filesystému (stateless runtime).
+- **Testy a Quality Gates:** 1 nový integrační unit test pro healthcheck endpoint v `tests/api/health.test.ts` a rozšíření `tests/unit/auth.test.ts` pro NAS origin, celkem 907/907 PASS, lint PASS, typecheck PASS, build PASS, db:check PASS.
+
 ---
 
 # CURRENT – Aktuálně řešené
@@ -387,8 +403,11 @@ Sem patří aktuálně rozpracované úkoly.
 
 Sem patří nejbližší schválené úkoly, které mají následovat.
 
-1. **Přílohy k úkolům:**
-   - Správa a nahrávání souborů k úkolům.
+1. **STEP 11 – Přílohy k úkolům (Attachments):**
+   - Správa a nahrávání souborů a fotografií k úkolům.
+   - Návrh persistentního úložiště na Synology NAS (Docker volume / namapovaný adresář).
+   - Databázový model příloh, limity velikosti a typů souborů.
+   - Autorizační pravidla pro nahrávání, stahování a mazání příloh.
 
 ---
 

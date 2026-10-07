@@ -7567,3 +7567,59 @@ Navržená implementační struktura a bootstrap architektura byly detailně kon
 | **1.2.0** | 19. 9. 2026 | Step 14 – Technická architektura aplikace, vrstvy, závislosti, Application/Domain/Infrastructure hranice, Authentication/Authorization, Repository, transakce, Event/Outbox, Notification, Audit, testovatelnost a technické invarianty. | Antigravity / Product Owner |
 | **1.3.0** | 19. 9. 2026 | Step 15 – Výběr technologického stacku a ADR: frontend, UI strategie, TypeScript, runtime, PostgreSQL, persistence, autentizace, session, authorization, API, validation, migrations, events, notifications, search, deployment, testing, observability a další technická rozhodnutí. | Antigravity / Product Owner |
 | **1.4.0** | 19. 9. 2026 | Step 16 – Implementační struktura projektu a bootstrap architektura: fyzická adresářová struktura monolitu (`app/`, `modules/`, `infrastructure/`, `shared/`, `database/`, `tests/`), hranice modulů a vrstev, pravidla importů, Branded IDs, Result pattern, Outbox worker, sekvence bootstrapu, lifecycle požadavku a 25 implementačních invariantů. | Antigravity / Product Owner |
+| **1.5.0** | 7. 10. 2026 | Step 10 – Infrastruktura, Runtime a Běhové prostředí: definice vývojového (Windows PC) a produkčního (Synology NAS DS725+) prostředí, multi-stage Dockerfile s Alpine Node 20 a non-root uživatelem, docker-compose.yml napojený na existující PostgreSQL bez duplikace DB, liveness healthcheck /api/health, Better Auth a Next.js podpora pro LAN http://192.168.0.250:3000, bezpečné řízené migrace bez vystavení secrets a bezstavový runtime. | Antigravity / Product Owner |
+
+---
+
+## 37. Infrastruktura, Runtime a Běhové prostředí (STEP 10)
+
+### 37.1 Rozlišení běhových prostředí
+
+Systém důsledně odděluje vývojové prostředí na pracovním PC od produkčního prostředí na Synology NAS:
+
+#### Development (Lokální vývoj na Windows PC)
+```text
+Windows PC (C:\Users\Milan\Projekty\Nastenka)
+   ↓
+Next.js dev server (npm run dev na http://localhost:3000)
+   ↓ (LAN síťové spojení)
+PostgreSQL na Synology NAS (192.168.0.250:5432)
+```
+
+#### Production / Test (Synology NAS DS725+)
+```text
+LAN Klienti (PC / Mobil / Tablet v síti)
+   ↓
+http://192.168.0.250:3000
+   ↓
+Synology NAS (Container Manager / Docker)
+   ↓
+Nástěnka kontejner (Alpine Linux, Node.js 20 LTS, non-root nextjs:1001)
+   ↓ (lokální připojení přes DATABASE_URL)
+existující PostgreSQL server na NAS (společný s aplikací Pronájmy)
+```
+
+### 37.2 Závazné infrastruktury principy
+
+1. **Žádný nový PostgreSQL kontejner v Compose:**
+   Aplikace Nástěnka se připojuje k již existujícímu PostgreSQL serveru na Synology NAS. Docker Compose nesmí obsahovat službu `postgres:` ani jiný nový databázový engine.
+2. **Kontejnerizace Next.js 16 (App Router):**
+   Multi-stage `Dockerfile` (`node:20-alpine`) s hermetickým sestavením:
+   - Fáze `deps`: instalace z `package-lock.json` přes `npm ci`.
+   - Fáze `builder`: sestavení produkčních artefaktů přes `npm run build`.
+   - Fáze `prod-deps`: příprava čistých produkčních balíčků přes `npm ci --omit=dev`.
+   - Fáze `runner`: minimální běhový obraz obsahující pouze nezbytné soubory (`.next`, `node_modules`, `public`, `package.json`, `database/migrations`).
+   - Spouštění aplikace přes standardní `npm run start` na portu 3000.
+3. **Bezpečnost v kontejneru (Non-root user):**
+   Aplikace v kontejneru neběží pod uživatelem `root`, ale pod vyhrazeným neprivilegovaným systémovým uživatelem `nextjs:nodejs` (UID 1001, GID 1001).
+4. **Hermetický build a striktní zákaz úniku secrets:**
+   `.dockerignore` zaručuje, že žádné `.env*` soubory, `.git`, testy ani vývojové artefakty neproniknou do výsledného Docker obrazu. Konfigurace se předává za běhu přes runtime environment proměnné (soubor `.env` na NAS s právy `chmod 600`).
+5. **Liveness Healthcheck a monitoring:**
+   Endpoint `/api/health` vracející HTTP 200 `{ status: "ok", timestamp: ... }` slouží jako neinvazivní liveness probe pro Docker a Synology Container Manager bez zbytečného zatěžování databáze.
+6. **Řízené databázové migrace (Žádný automatický loop ani db:push):**
+   Kontejner při startu neprovádí automatické migrace. Migrace probíhají výhradně explicitním spuštěním Drizzle migrací před nasazením/startem aplikace:
+   - Buď z vývojového PC: `node --env-file=.env.production ./node_modules/drizzle-kit/bin.cjs migrate`
+   - Nebo jednorázovým příkazem na NAS.
+7. **Bezstavový běh (Stateless):**
+   Aplikace v tomto kroku nezapisuje žádná data do lokálního disku/souborového systému. Veškerý stav je perzistován v PostgreSQL. Persistentní diskové úložiště pro soubory a fotografie k úkolům (Attachments) bude navrženo v samostatném navazujícím kroku STEP 11.
+
